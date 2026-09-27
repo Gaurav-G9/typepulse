@@ -10,10 +10,6 @@ import 'theme/app_colors.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Color(0x00000000),
-    statusBarIconBrightness: Brightness.dark,
-  ));
   runApp(const TypePulseApp());
 }
 
@@ -33,40 +29,39 @@ class _TypePulseAppState extends State<TypePulseApp> {
     store.load().then((_) {
       if (mounted) setState(() {});
     });
-    store.addListener(() {
-      if (mounted) setState(() {});
-    });
+    store.addListener(_onStore);
+  }
+
+  void _onStore() {
+    AppColors.dark = store.profile.darkMode;
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+      statusBarColor: const Color(0x00000000),
+      statusBarIconBrightness: AppColors.dark ? Brightness.light : Brightness.dark,
+      systemNavigationBarColor: AppColors.canvas,
+      systemNavigationBarIconBrightness: AppColors.dark ? Brightness.light : Brightness.dark,
+    ));
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    store.removeListener(_onStore);
     store.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    AppColors.dark = store.profile.darkMode;
     return CupertinoApp(
       title: 'TypePulse',
       debugShowCheckedModeBanner: false,
-      theme: const CupertinoThemeData(
-        brightness: Brightness.light,
-        primaryColor: AppColors.indigo,
-        scaffoldBackgroundColor: AppColors.canvas,
-        barBackgroundColor: AppColors.navBar,
-        textTheme: CupertinoTextThemeData(
-          textStyle: TextStyle(
-            fontFamily: '.SF Pro Text',
-            color: AppColors.label,
-            fontSize: 16,
-          ),
-        ),
-      ),
+      theme: AppColors.cupertinoTheme(),
       home: store.loaded
           ? RootTabs(store: store)
-          : const CupertinoPageScaffold(
+          : CupertinoPageScaffold(
               backgroundColor: AppColors.background,
-              child: Center(child: CupertinoActivityIndicator()),
+              child: const Center(child: CupertinoActivityIndicator()),
             ),
     );
   }
@@ -80,9 +75,10 @@ class RootTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     return CupertinoTabScaffold(
       tabBar: CupertinoTabBar(
-        backgroundColor: const Color(0xF0F9F9F9),
+        backgroundColor: AppColors.tabBar,
         activeColor: AppColors.indigo,
         inactiveColor: AppColors.secondaryLabel,
+        border: Border(top: BorderSide(color: AppColors.separator, width: 0.5)),
         items: const [
           BottomNavigationBarItem(
             icon: Icon(CupertinoIcons.house),
@@ -108,26 +104,18 @@ class RootTabs extends StatelessWidget {
       tabBuilder: (context, index) {
         switch (index) {
           case 1:
-            return CupertinoTabView(
-              builder: (_) => LiveLobbyScreen(store: store),
-            );
+            return CupertinoTabView(builder: (_) => LiveLobbyScreen(store: store));
           case 2:
-            return CupertinoTabView(
-              builder: (_) => LeaderboardScreen(store: store),
-            );
+            return CupertinoTabView(builder: (_) => LeaderboardScreen(store: store));
           case 3:
-            return CupertinoTabView(
-              builder: (_) => ProfileScreen(store: store),
-            );
+            return CupertinoTabView(builder: (_) => ProfileScreen(store: store));
           default:
             return CupertinoTabView(
               builder: (_) => HomeScreen(
                 store: store,
                 onOpenLive: () {
                   Navigator.of(_).push(
-                    CupertinoPageRoute(
-                      builder: (ctx) => LiveLobbyScreen(store: store),
-                    ),
+                    CupertinoPageRoute(builder: (ctx) => LiveLobbyScreen(store: store)),
                   );
                 },
               ),

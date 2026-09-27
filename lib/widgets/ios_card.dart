@@ -33,19 +33,39 @@ class StatTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label.toUpperCase(), style: const TextStyle(fontSize: 11, letterSpacing: 0.6, color: AppColors.secondaryLabel, fontWeight: FontWeight.w600)),
+          Text(label.toUpperCase(), style: TextStyle(fontSize: 11, letterSpacing: 0.6, color: AppColors.secondaryLabel, fontWeight: FontWeight.w600)),
           const SizedBox(height: 6),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(value, style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: accent, letterSpacing: -0.6)),
+              Text(value, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: accent, letterSpacing: -0.6)),
               if (suffix != null) ...[
                 const SizedBox(width: 4),
-                Padding(padding: const EdgeInsets.only(bottom: 3), child: Text(suffix!, style: const TextStyle(fontSize: 13, color: AppColors.secondaryLabel))),
+                Padding(padding: const EdgeInsets.only(bottom: 3), child: Text(suffix!, style: TextStyle(fontSize: 13, color: AppColors.secondaryLabel))),
               ],
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Theme toggle for nav bars.
+class ThemeToggleButton extends StatelessWidget {
+  final bool isDark;
+  final VoidCallback onToggle;
+  const ThemeToggleButton({super.key, required this.isDark, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoButton(
+      padding: EdgeInsets.zero,
+      onPressed: onToggle,
+      child: Icon(
+        isDark ? CupertinoIcons.sun_max_fill : CupertinoIcons.moon_fill,
+        color: AppColors.label,
+        size: 22,
       ),
     );
   }

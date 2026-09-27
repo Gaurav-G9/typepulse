@@ -1,21 +1,35 @@
 import 'package:flutter/cupertino.dart';
 import 'package:intl/intl.dart';
+
 import '../data/store.dart';
 import '../theme/app_colors.dart';
 import '../widgets/activity_rings.dart';
+import '../widgets/ios_card.dart';
+import '../widgets/trend_chart.dart';
 import 'history_screen.dart';
 import 'practice_screen.dart';
 import 'session_detail_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   final AppStore store;
   final VoidCallback onOpenLive;
   const HomeScreen({super.key, required this.store, required this.onOpenLive});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int rangeDays = 7;
+  AppStore get store => widget.store;
+
+  @override
   Widget build(BuildContext context) {
-    final testsP = (store.today.length / 20).clamp(0.0, 1.0);
+    final testsP = (store.today.length / 8).clamp(0.0, 1.0);
     final speedP = store.avgNet == 0 ? 0.0 : store.avgNet / store.profile.targetWpm;
+    final netSeries = store.lastNNetWpm(rangeDays);
+    final accSeries = store.lastNAccuracy(rangeDays);
+
     return ColoredBox(
       color: AppColors.canvas,
       child: CustomScrollView(slivers: [
@@ -23,72 +37,242 @@ class HomeScreen extends StatelessWidget {
           largeTitle: const Text('Summary'),
           border: null,
           backgroundColor: AppColors.canvas,
-          trailing: CupertinoButton(
-            padding: EdgeInsets.zero,
-            onPressed: () => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => PracticeScreen(store: store, seconds: 300))),
-            child: const Icon(CupertinoIcons.add_circled_solid),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ThemeToggleButton(
+                isDark: store.profile.darkMode,
+                onToggle: () => store.toggleDarkMode(),
+              ),
+              CupertinoButton(
+                padding: const EdgeInsets.only(left: 4),
+                onPressed: () => Navigator.of(context).push(
+                  CupertinoPageRoute(builder: (_) => PracticeScreen(store: store)),
+                ),
+                child: Icon(CupertinoIcons.add_circled_solid, color: AppColors.indigo),
+              ),
+            ],
           ),
         ),
-        SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-          child: Row(children: [
-            ActivityRings(tests: testsP, speed: speedP, accuracy: store.avgAccuracy / 100),
-            const SizedBox(width: 16),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Tests  ${store.today.length}/20', style: const TextStyle(fontWeight: FontWeight.w700)),
-              Text('Speed  ${store.avgNet.toStringAsFixed(0)}/${store.profile.targetWpm}', style: const TextStyle(fontWeight: FontWeight.w700)),
-              Text('Accuracy  ${store.avgAccuracy.toStringAsFixed(0)}/100', style: const TextStyle(fontWeight: FontWeight.w700)),
-            ])),
-          ]),
-        )),
-        SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-          child: Column(children: [
-            HeroMetric(value: '${store.sessions.length}', unit: '', label: 'Total Tests Attempted', dot: AppColors.dotTests),
-            HeroMetric(value: store.avgGross == 0 ? '—' : store.avgGross.toStringAsFixed(0), unit: 'wpm', label: 'Avg. Gross Speed', dot: AppColors.dotGross),
-            HeroMetric(value: store.avgNet == 0 ? '—' : store.avgNet.toStringAsFixed(0), unit: 'wpm', label: 'Avg. Net Speed', dot: AppColors.dotNet),
-            HeroMetric(value: store.avgAccuracy == 0 ? '—' : store.avgAccuracy.toStringAsFixed(0), unit: '%', label: 'Avg. Accuracy', dot: AppColors.dotAcc),
-          ]),
-        )),
-        SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-          child: Row(children: [
-            Expanded(child: _btn('Practice', AppColors.ringMove, () {
-              Navigator.of(context).push(CupertinoPageRoute(builder: (_) => PracticeScreen(store: store, seconds: 300)));
-            })),
-            const SizedBox(width: 10),
-            Expanded(child: _btn('Live', const Color(0xFF32ADE6), onOpenLive)),
-          ]),
-        )),
-        SliverToBoxAdapter(child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
-          child: Row(children: [
-            const Text('Workouts', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-            const Spacer(),
-            CupertinoButton(padding: EdgeInsets.zero, onPressed: () => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => HistoryScreen(store: store))), child: const Text('Show More')),
-          ]),
-        )),
-        SliverList(delegate: SliverChildBuilderDelegate((context, i) {
-          final s = store.sessions[i];
-          return GestureDetector(
-            onTap: () => Navigator.of(context).push(CupertinoPageRoute(builder: (_) => SessionDetailScreen(store: store, session: s))),
-            child: Container(
-              margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(color: AppColors.groupedBackground, borderRadius: BorderRadius.circular(16)),
-              child: Row(children: [
-                const Icon(CupertinoIcons.graph_circle_fill, color: AppColors.ringMove),
-                const SizedBox(width: 12),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(s.examTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
-                  Text('${DateFormat('d MMM').format(s.startedAt)}  ·  ${mmss(s.timeTakenSec)}', style: const TextStyle(color: AppColors.secondaryLabel, fontSize: 13)),
-                ])),
-                Text(s.netWpm.toStringAsFixed(0), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-              ]),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+            child: Row(children: [
+              ActivityRings(tests: testsP, speed: speedP, accuracy: store.avgAccuracy / 100),
+              const SizedBox(width: 18),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _ringLegend('Move', '${store.today.length} tests', AppColors.ringMove),
+                    const SizedBox(height: 8),
+                    _ringLegend('Exercise', '${store.avgNet.toStringAsFixed(0)} net', AppColors.ringExerciseDark),
+                    const SizedBox(height: 8),
+                    _ringLegend('Stand', '${store.avgAccuracy.toStringAsFixed(0)}% acc', const Color(0xFF32ADE6)),
+                  ],
+                ),
+              ),
+            ]),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+            child: Row(
+              children: [
+                Text('Trend', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.label)),
+                const Spacer(),
+                RangeChips(
+                  selected: rangeDays,
+                  onChanged: (d) => setState(() => rangeDays = d),
+                ),
+              ],
             ),
-          );
-        }, childCount: store.sessions.length.clamp(0, 8))),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+              decoration: BoxDecoration(
+                color: AppColors.groupedBackground,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+                    child: Row(children: [
+                      _legendDot(AppColors.ringMove, 'Net WPM'),
+                      const SizedBox(width: 14),
+                      _legendDot(AppColors.ringStand, 'Accuracy'),
+                      const Spacer(),
+                      Text(
+                        store.arConnected ? 'AR synced' : 'Local + sample',
+                        style: TextStyle(fontSize: 11, color: AppColors.secondaryLabel),
+                      ),
+                    ]),
+                  ),
+                  TrendChart(netWpm: netSeries, accuracy: accSeries, days: rangeDays),
+                ],
+              ),
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+            child: Column(children: [
+              HeroMetric(
+                value: '${store.sessions.length}',
+                unit: '',
+                label: 'Total Tests',
+                dot: AppColors.dotTests,
+              ),
+              HeroMetric(
+                value: store.avgNet == 0 ? '—' : store.avgNet.toStringAsFixed(0),
+                unit: 'wpm',
+                label: 'Avg. Net Speed',
+                dot: AppColors.dotNet,
+              ),
+              HeroMetric(
+                value: store.avgGross == 0 ? '—' : store.avgGross.toStringAsFixed(0),
+                unit: 'wpm',
+                label: 'Avg. Gross Speed',
+                dot: AppColors.dotGross,
+              ),
+              HeroMetric(
+                value: store.avgAccuracy == 0 ? '—' : store.avgAccuracy.toStringAsFixed(0),
+                unit: '%',
+                label: 'Avg. Accuracy',
+                dot: AppColors.dotAcc,
+              ),
+            ]),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Row(children: [
+              _insightChip('${store.streak} day streak', AppColors.orange),
+              const SizedBox(width: 8),
+              _insightChip('${store.qualifiedCount} qualified', AppColors.green),
+            ]),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+            child: Row(children: [
+              Expanded(
+                child: _btn('Practice', AppColors.ringMove, () {
+                  Navigator.of(context).push(
+                    CupertinoPageRoute(builder: (_) => PracticeScreen(store: store)),
+                  );
+                }),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: _btn('Live', const Color(0xFF32ADE6), widget.onOpenLive)),
+            ]),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 12, 8),
+            child: Row(children: [
+              Text('Workouts', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.label)),
+              const Spacer(),
+              CupertinoButton(
+                padding: EdgeInsets.zero,
+                onPressed: () => Navigator.of(context).push(
+                  CupertinoPageRoute(builder: (_) => HistoryScreen(store: store)),
+                ),
+                child: const Text('Show More'),
+              ),
+            ]),
+          ),
+        ),
+        SliverList(
+          delegate: SliverChildBuilderDelegate((context, i) {
+            final s = store.sessions[i];
+            final isAr = s.source == 'ar' || s.id.startsWith('ar-');
+            return GestureDetector(
+              onTap: () => Navigator.of(context).push(
+                CupertinoPageRoute(builder: (_) => SessionDetailScreen(store: store, session: s)),
+              ),
+              child: Container(
+                margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.groupedBackground,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(children: [
+                  Icon(
+                    isAr ? CupertinoIcons.cloud_fill : CupertinoIcons.graph_circle_fill,
+                    color: isAr ? AppColors.blue : AppColors.ringMove,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          s.passageTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.label),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${DateFormat('d MMM').format(s.startedAt)}  ·  ${mmss(s.timeTakenSec)}${isAr ? '  ·  AR' : ''}',
+                          style: TextStyle(color: AppColors.secondaryLabel, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    s.netWpm.toStringAsFixed(0),
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 20, color: AppColors.label),
+                  ),
+                ]),
+              ),
+            );
+          }, childCount: store.sessions.length.clamp(0, 8)),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 28)),
       ]),
+    );
+  }
+
+  Widget _ringLegend(String title, String value, Color c) {
+    return Row(children: [
+      Container(width: 8, height: 8, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+      const SizedBox(width: 8),
+      Text('$title  ', style: TextStyle(fontSize: 13, color: AppColors.secondaryLabel)),
+      Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.label)),
+    ]);
+  }
+
+  Widget _legendDot(Color c, String label) {
+    return Row(children: [
+      Container(width: 8, height: 8, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+      const SizedBox(width: 5),
+      Text(label, style: TextStyle(fontSize: 11, color: AppColors.secondaryLabel)),
+    ]);
+  }
+
+  Widget _insightChip(String text, Color c) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: c.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
     );
   }
 
@@ -97,7 +281,7 @@ class HomeScreen extends StatelessWidget {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(18)),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(16)),
         alignment: Alignment.center,
         child: Text(title, style: const TextStyle(color: CupertinoColors.white, fontWeight: FontWeight.w700)),
       ),

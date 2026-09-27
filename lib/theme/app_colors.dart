@@ -1,24 +1,40 @@
 import 'package:flutter/cupertino.dart';
 
-/// Apple Fitness / Activity language on a light Fitness-summary canvas.
+/// Minimal Fitness-inspired palette with light / dark variants.
+/// Toggle [dark] from the store before rebuilds.
 class AppColors {
-  static const background = Color(0xFFF2F2F7);
-  static const canvas = Color(0xFFFFFFFF);
-  static const groupedBackground = Color(0xFFF2F2F7);
-  static const card = Color(0xFFFFFFFF);
-  static const label = Color(0xFF1C1C1E);
-  static const secondaryLabel = Color(0xFF8E8E93);
-  static const tertiaryLabel = Color(0xFFC7C7CC);
-  static const separator = Color(0xFFE5E5EA);
+  static bool dark = false;
+
+  static Color get background =>
+      dark ? const Color(0xFF000000) : const Color(0xFFF2F2F7);
+  static Color get canvas =>
+      dark ? const Color(0xFF000000) : const Color(0xFFFFFFFF);
+  static Color get groupedBackground =>
+      dark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7);
+  static Color get card =>
+      dark ? const Color(0xFF1C1C1E) : const Color(0xFFFFFFFF);
+  static Color get label =>
+      dark ? const Color(0xFFF5F5F7) : const Color(0xFF1C1C1E);
+  static Color get secondaryLabel =>
+      dark ? const Color(0xFF8E8E93) : const Color(0xFF8E8E93);
+  static Color get tertiaryLabel =>
+      dark ? const Color(0xFF48484A) : const Color(0xFFC7C7CC);
+  static Color get separator =>
+      dark ? const Color(0xFF38383A) : const Color(0xFFE5E5EA);
+  static Color get fill =>
+      dark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7);
+  static Color get navBar =>
+      dark ? const Color(0xF01C1C1E) : const Color(0xF0F9F9F9);
+  static Color get tabBar =>
+      dark ? const Color(0xF01C1C1E) : const Color(0xF0F9F9F9);
+
   static const indigo = Color(0xFF5856D6);
-  static const blue = Color(0xFF007AFF);
+  static const blue = Color(0xFF0A84FF);
   static const teal = Color(0xFF64D2FF);
   static const green = Color(0xFF30D158);
   static const orange = Color(0xFFFF9F0A);
   static const red = Color(0xFFFF453A);
   static const pink = Color(0xFFFF375F);
-  static const fill = Color(0xFFF2F2F7);
-  static const navBar = Color(0xF0F9F9F9);
 
   static const ringMove = Color(0xFFFA4D67);
   static const ringExercise = Color(0xFF9BFF37);
@@ -32,4 +48,32 @@ class AppColors {
 
   static const gradientStart = Color(0xFFFA4D67);
   static const gradientEnd = Color(0xFFFF9F0A);
+
+  static CupertinoThemeData cupertinoTheme() {
+    final brightness = dark ? Brightness.dark : Brightness.light;
+    return CupertinoThemeData(
+      brightness: brightness,
+      primaryColor: indigo,
+      scaffoldBackgroundColor: canvas,
+      barBackgroundColor: navBar,
+      textTheme: CupertinoTextThemeData(
+        textStyle: TextStyle(
+          fontFamily: '.SF Pro Text',
+          color: label,
+          fontSize: 16,
+        ),
+        navLargeTitleTextStyle: TextStyle(
+          fontSize: 34,
+          fontWeight: FontWeight.w700,
+          color: label,
+          letterSpacing: -0.5,
+        ),
+        navTitleTextStyle: TextStyle(
+          fontSize: 17,
+          fontWeight: FontWeight.w600,
+          color: label,
+        ),
+      ),
+    );
+  }
 }

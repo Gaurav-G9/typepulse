@@ -14,7 +14,7 @@ class TypingSession {
   final double wordsTyped;
   final int fullMistakes;
   final int halfMistakes;
-  final int totalWrongWords;
+  final double totalWrongWords;
   final double netWrongWords;
   final int backspaceCount;
   final double wpm;
@@ -22,6 +22,10 @@ class TypingSession {
   final double accuracy;
   final bool qualified;
   final String formulaNote;
+  final int targetWpm;
+  final String? expectedText;
+  final String? typedText;
+  final String source; // local | ar
   final int? liveRank;
   final int? liveField;
 
@@ -49,6 +53,10 @@ class TypingSession {
     required this.accuracy,
     required this.qualified,
     required this.formulaNote,
+    this.targetWpm = 30,
+    this.expectedText,
+    this.typedText,
+    this.source = 'local',
     this.liveRank,
     this.liveField,
   });
@@ -77,6 +85,10 @@ class TypingSession {
         'accuracy': accuracy,
         'qualified': qualified,
         'formulaNote': formulaNote,
+        'targetWpm': targetWpm,
+        'expectedText': expectedText,
+        'typedText': typedText,
+        'source': source,
         'liveRank': liveRank,
         'liveField': liveField,
       };
@@ -98,7 +110,9 @@ class TypingSession {
             ((j['typedChars'] as num).toDouble() / 5.0),
         fullMistakes: j['fullMistakes'] as int? ?? 0,
         halfMistakes: j['halfMistakes'] as int? ?? 0,
-        totalWrongWords: j['totalWrongWords'] as int? ?? j['errors'] as int? ?? 0,
+        totalWrongWords: (j['totalWrongWords'] as num?)?.toDouble() ??
+            (j['errors'] as num?)?.toDouble() ??
+            0,
         netWrongWords: (j['netWrongWords'] as num?)?.toDouble() ?? 0,
         backspaceCount: j['backspaceCount'] as int? ?? 0,
         wpm: (j['wpm'] as num).toDouble(),
@@ -106,6 +120,10 @@ class TypingSession {
         accuracy: (j['accuracy'] as num).toDouble(),
         qualified: j['qualified'] as bool? ?? false,
         formulaNote: j['formulaNote'] as String? ?? '',
+        targetWpm: j['targetWpm'] as int? ?? 30,
+        expectedText: j['expectedText'] as String?,
+        typedText: j['typedText'] as String?,
+        source: j['source'] as String? ?? 'local',
         liveRank: j['liveRank'] as int?,
         liveField: j['liveField'] as int?,
       );

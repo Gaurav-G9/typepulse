@@ -1,12 +1,19 @@
 # TypePulse
 
-iOS-style typing tracker for **Android**, built with Flutter.
+Minimal iOS Fitness–style typing tracker for Android (Flutter / Cupertino).
 
-Personal stats, 5-minute exam practice, live rooms, weekly ranks, and a Performance Dashboard (gross / net WPM, full and half mistakes, backspaces, qualified).
+**Website is the data source; the app is the presentation layer.** Sign in with your [AR Typing Platform](https://www.artypingplatform.com) email and password to sync history, then browse workouts as Activity rings, large Summary metrics, and a Performance Dashboard.
 
-## Run on Android
+## Features
 
-You need [Flutter](https://docs.flutter.dev/get-started/install) 3.22+ and an Android emulator or phone.
+- **AR Typing sync** — secure JWT login, history + profile pull, logout
+- **UPSSSC-style scoring** — keystrokes ÷ 5, full/half mistakes, error allowance + penalty, duration vs time-taken toggles
+- **Summary** — rings, 7 / 15 / 30-day net WPM + accuracy trend, streak, qualified count
+- **Workouts history** — aggregates, All / English / Hindi / Qualified filters
+- **Dark / Light** — moon/sun toggle in the top corner (persisted)
+- Offline practice with exam + passage pickers (EN / HI)
+
+## Run
 
 ```bash
 git clone https://github.com/Gaurav-G9/typepulse.git
@@ -15,25 +22,30 @@ flutter pub get
 flutter run
 ```
 
-If Gradle asks for a wrapper jar:
+Do **not** commit passwords. On **You → AR Typing**, enter:
 
-```bash
-flutter create . --project-name typepulse --org com.typepulse
-flutter pub get
-flutter run
-```
+- Email: `you@example.com`
+- Password: *(your AR Typing password)*
 
-`flutter create .` fills platform folders and does **not** wipe `lib/`.
+Tokens are stored with `flutter_secure_storage` on device only.
 
-## App map
+## AR API (discovered)
 
-- **Summary** — Fitness rings, stacked averages, workout list
-- **Live** — Rooms and a simulated heat
-- **Ranks** — Weekly net WPM board
-- **You** — Name, language, daily goal, target WPM
+Base: `https://artypingplatform-efb5438ddb1b.herokuapp.com/api/v1`
 
-Tap any workout for the Performance Dashboard.
+| Method | Path | Notes |
+|--------|------|--------|
+| POST | `/jwt/create/` | `{email, password}` → `{access, refresh}` |
+| POST | `/jwt/refresh/` | `{refresh}` → `{access}` |
+| POST | `/logout/` | `{refresh}` + `Authorization: JWT …` |
+| GET | `/learning/typedPassages/` | paginated history |
+| GET | `/learning/students/profile/` | profile |
+| GET | `/learning/memberTypingStats/` | stats (may 403 on Free Mode) |
 
-Sessions stay on the device. First launch includes one sample UPSSSC-style result.
+Auth header style matches the site: `Authorization: JWT <access>`.
+
+## Scoring note
+
+Aligned with UPSSSC / AR Typing keystroke÷5 scoring and dashboard toggles. Sample history is illustrative of UPSSSC practice patterns until you sync.
 
 Package: `com.typepulse.typepulse`

@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:flutter/cupertino.dart';
 import '../theme/app_colors.dart';
 
@@ -14,7 +12,7 @@ class ActivityRings extends StatelessWidget {
     required this.tests,
     required this.speed,
     required this.accuracy,
-    this.size = 148,
+    this.size = 132,
   });
 
   @override
@@ -40,8 +38,8 @@ class _RingsPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
-    final stroke = size.width * 0.105;
-    final gap = stroke * 0.28;
+    final stroke = size.width * 0.1;
+    final gap = stroke * 0.32;
     _ring(canvas, c, size.width / 2 - stroke / 2, stroke, tests, AppColors.ringMove, const Color(0x22FA4D67));
     _ring(canvas, c, size.width / 2 - stroke * 1.5 - gap, stroke, speed, AppColors.ringExerciseDark, const Color(0x229BFF37));
     _ring(canvas, c, size.width / 2 - stroke * 2.5 - gap * 2, stroke, accuracy, const Color(0xFF32ADE6), const Color(0x225CE5FF));
@@ -54,7 +52,8 @@ class _RingsPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _RingsPainter old) => old.tests != tests || old.speed != speed || old.accuracy != accuracy;
+  bool shouldRepaint(covariant _RingsPainter old) =>
+      old.tests != tests || old.speed != speed || old.accuracy != accuracy;
 }
 
 class HeroMetric extends StatelessWidget {
@@ -67,20 +66,32 @@ class HeroMetric extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 18),
+      padding: const EdgeInsets.symmetric(vertical: 14),
       child: Column(
         children: [
           RichText(
             textAlign: TextAlign.center,
             text: TextSpan(children: [
-              TextSpan(text: value, style: const TextStyle(fontFamily: 'Georgia', fontSize: 56, height: 1, color: AppColors.label, letterSpacing: -1.2)),
-              TextSpan(text: unit.isEmpty ? '' : ' $unit', style: const TextStyle(fontFamily: 'Georgia', fontSize: 34, color: AppColors.label)),
+              TextSpan(
+                text: value,
+                style: TextStyle(
+                  fontFamily: 'Georgia',
+                  fontSize: 52,
+                  height: 1,
+                  color: AppColors.label,
+                  letterSpacing: -1.2,
+                ),
+              ),
+              TextSpan(
+                text: unit.isEmpty ? '' : ' $unit',
+                style: TextStyle(fontFamily: 'Georgia', fontSize: 28, color: AppColors.label),
+              ),
             ]),
           ),
-          const SizedBox(height: 8),
-          Text(label, style: const TextStyle(fontSize: 15, color: AppColors.secondaryLabel)),
-          const SizedBox(height: 18),
-          Container(width: 8, height: 8, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
+          const SizedBox(height: 6),
+          Text(label, style: TextStyle(fontSize: 14, color: AppColors.secondaryLabel)),
+          const SizedBox(height: 14),
+          Container(width: 6, height: 6, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
         ],
       ),
     );
@@ -98,20 +109,24 @@ class DashRow extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(14), border: Border.all(color: Color(0x14000000))),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.separator.withOpacity(0.6)),
+      ),
       child: Row(
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontSize: 13, color: AppColors.secondaryLabel)),
+                Text(title, style: TextStyle(fontSize: 13, color: AppColors.secondaryLabel)),
                 const SizedBox(height: 4),
-                Text(value, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, letterSpacing: -0.6)),
+                Text(value, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, letterSpacing: -0.6, color: AppColors.label)),
               ],
             ),
           ),
-          Icon(icon, color: AppColors.label, size: 22),
+          Icon(icon, color: AppColors.label, size: 20),
         ],
       ),
     );
