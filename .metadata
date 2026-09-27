@@ -1,0 +1,15 @@
+# This file tracks properties of this Flutter project.
+version:
+  revision: "typepulse-handcrafted"
+  channel: "stable"
+
+project_type: app
+
+migration:
+  platforms:
+    - platform: root
+      create_revision: typepulse
+      base_revision: typepulse
+    - platform: android
+      create_revision: typepulse
+      base_revision: typepulse
