@@ -27,12 +27,25 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
 
   TypingSession get s => widget.session;
 
+  bool get isAr => s.source == 'ar' || s.id.startsWith('ar-');
+
+  ScoreBreakdown? _cached;
+  List<WordAlignment>? _aligned;
+  (bool, bool)? _cachedFor;
+
+  /// Word alignment is O(words²) — only recompute when a toggle changes.
   ScoreBreakdown get breakdown {
+    final key = (speedOnDuration, keystrokeFormula);
+    if (_cached != null && _cachedFor == key) return _cached!;
+    _cachedFor = key;
+    return _cached = _computeBreakdown();
+  }
+
+  ScoreBreakdown _computeBreakdown() {
     final hasTexts = (s.expectedText?.isNotEmpty ?? false) && (s.typedText?.isNotEmpty ?? false);
-    // AR results keep the site's own mistake counts; only local sessions are re-scored.
-    final isAr = s.source == 'ar' || s.id.startsWith('ar-');
-    if (hasTexts && !isAr) {
-      return Scoring.evaluate(
+    final ScoreBreakdown b;
+    if (hasTexts) {
+      b = Scoring.evaluate(
         expected: s.expectedText!,
         typed: s.typedText!,
         durationSec: s.durationSec,
@@ -41,27 +54,39 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
         useDurationForSpeed: speedOnDuration,
         keystrokeWordFormula: keystrokeFormula,
       );
+    } else {
+      b = Scoring.approximateFromSession(
+        typedChars: s.typedChars,
+        storedWordsTyped: s.wordsTyped,
+        fullMistakes: s.fullMistakes,
+        halfMistakes: s.halfMistakes,
+        durationSec: s.durationSec,
+        timeTakenSec: s.timeTakenSec,
+        targetWpm: s.targetWpm,
+        accuracy: s.accuracy,
+        correctChars: s.correctChars,
+        errors: s.errors,
+        useDurationForSpeed: speedOnDuration,
+        keystrokeWordFormula: keystrokeFormula,
+      );
     }
-    return Scoring.approximateFromSession(
-      typedChars: s.typedChars,
-      storedWordsTyped: s.wordsTyped,
-      fullMistakes: s.fullMistakes,
-      halfMistakes: s.halfMistakes,
-      durationSec: s.durationSec,
-      timeTakenSec: s.timeTakenSec,
-      targetWpm: s.targetWpm,
-      accuracy: s.accuracy,
-      correctChars: s.correctChars,
-      errors: s.errors,
-      useDurationForSpeed: speedOnDuration,
-      keystrokeWordFormula: keystrokeFormula,
-    );
+    // With default toggles an AR result shows AR Typing's official numbers;
+    // the toggles switch to an on-device recalculation.
+    if (isAr && !speedOnDuration && keystrokeFormula) {
+      return b.withOfficial(
+        grossWpm: s.wpm,
+        netWpm: s.netWpm,
+        accuracy: s.accuracy,
+        qualified: s.qualified,
+        note: s.formulaNote,
+      );
+    }
+    return b;
   }
 
   @override
   Widget build(BuildContext context) {
     final b = breakdown;
-    final isAr = s.source == 'ar' || s.id.startsWith('ar-');
     return CupertinoPageScaffold(
       backgroundColor: AppColors.canvas,
       navigationBar: CupertinoNavigationBar(
@@ -88,6 +113,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
             _meta('Exam', s.examTitle),
             _meta('Passage', s.passageTitle),
             _meta('Keystrokes given', '${s.keystrokesGiven}'),
+            _meta('Target speed', s.targetWpm > 0 ? '${s.targetWpm} wpm' : 'NA'),
             _meta('Duration', mmss(s.durationSec)),
             _meta('Date', DateFormat('dd/MM/yyyy').format(s.startedAt)),
             _meta('Time taken', mmss(s.timeTakenSec)),
@@ -196,7 +222,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen>
   }
 
   List<Widget> _wordDiff(String expected, String typed) {
-    final aligned = Scoring.alignWords(expected, typed);
+    final aligned = _aligned ??= Scoring.alignWords(expected, typed);
     final rows = <Widget>[];
     const limit = 120;
     final shown = aligned.length > limit ? limit : aligned.length;

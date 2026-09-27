@@ -40,6 +40,35 @@ class ScoreBreakdown {
     required this.useDurationForSpeed,
     required this.keystrokeWordFormula,
   });
+
+  /// Same mistake breakdown, but with speeds/result reported by AR Typing.
+  ScoreBreakdown withOfficial({
+    required double grossWpm,
+    required double netWpm,
+    required double accuracy,
+    required bool qualified,
+    required String note,
+  }) =>
+      ScoreBreakdown(
+        typedChars: typedChars,
+        correctChars: correctChars,
+        errors: errors,
+        wordsTyped: wordsTyped,
+        fullMistakes: fullMistakes,
+        halfMistakes: halfMistakes,
+        totalWrongWords: totalWrongWords,
+        netWrongWords: netWrongWords,
+        netCorrectWords: netCorrectWords,
+        grossWpm: grossWpm,
+        netWpm: netWpm,
+        accuracy: accuracy,
+        qualified: qualified,
+        formulaNote: note,
+        errorAllowance: errorAllowance,
+        penaltyMultiplier: penaltyMultiplier,
+        useDurationForSpeed: useDurationForSpeed,
+        keystrokeWordFormula: keystrokeWordFormula,
+      );
 }
 
 /// How one typed word lines up against the passage.

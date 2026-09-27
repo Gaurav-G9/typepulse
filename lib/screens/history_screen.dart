@@ -118,7 +118,7 @@ class _HistoryScreenState extends State<HistoryScreen>
                         _cell(DateFormat('dd/MM/yyyy').format(s.startedAt), 'Date'),
                         _cell(mmss(s.timeTakenSec), 'Time'),
                         _cell('${s.typedChars}', 'Keys'),
-                        _cell('${s.targetWpm}', 'Tgt'),
+                        _cell(s.targetWpm > 0 ? '${s.targetWpm}' : 'NA', 'Tgt'),
                         _cell(s.wpm.toStringAsFixed(0), 'Gross'),
                         _cell(s.netWpm.toStringAsFixed(0), 'Net'),
                       ]),

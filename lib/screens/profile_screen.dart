@@ -151,6 +151,19 @@ class ProfileScreen extends StatelessWidget {
                       ),
                       if (store.arSyncing) const CupertinoActivityIndicator(),
                     ]),
+                    if (store.arConnected && store.arPlanTitle != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Plan: ${store.arPlanTitle}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: store.arSubscribed == false
+                              ? AppColors.orange
+                              : AppColors.green,
+                        ),
+                      ),
+                    ],
                     if (store.arStatusMessage != null) ...[
                       const SizedBox(height: 8),
                       Text(store.arStatusMessage!,

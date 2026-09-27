@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/session.dart';
+import 'scoring.dart';
 
 /// Client for AR Typing Platform backend (Heroku API used by artypingplatform.com).
 ///
@@ -414,6 +415,40 @@ class ArTypingApi {
     return null;
   }
 
+  /// Member-area "Typing Insight" for the last [days] days (1/2/7/15/30).
+  /// Returns null when there's no activity in that window (API 404).
+  Future<Map<String, dynamic>?> fetchTypingProgress(int days) async {
+    if (!isLoggedIn) throw ArApiException('Not logged in', statusCode: 401);
+    final res = await _authedGet(
+      Uri.parse('$baseUrl/learning/typing-progress/')
+          .replace(queryParameters: {'days': '$days'}),
+    );
+    if (res.statusCode == 404) return null;
+    if (res.statusCode == 403) {
+      throw ArApiException(
+        'Typing Insight is not available on your current AR Typing plan.',
+        statusCode: 403,
+        freeMode: true,
+      );
+    }
+    if (res.statusCode != 200) {
+      throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
+    }
+    final body = _tryDecode(res.body);
+    return body is Map<String, dynamic> ? body : null;
+  }
+
+  /// Account details (`/users/me/`): name, `is_subscribed`, `subscription`.
+  Future<Map<String, dynamic>?> fetchMe() async {
+    if (!isLoggedIn) return null;
+    final res = await _authedGet(Uri.parse('$baseUrl/users/me/'));
+    if (res.statusCode != 200) {
+      throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
+    }
+    final body = _tryDecode(res.body);
+    return body is Map<String, dynamic> ? body : null;
+  }
+
   static String _errorDetail(http.Response res) {
     try {
       final body = jsonDecode(res.body);
@@ -429,17 +464,34 @@ class ArTypingApi {
     return 'Request failed (${res.statusCode})';
   }
 
-  /// Map one AR typedPassages row → TypingSession for Fitness-style UI.
-  static TypingSession sessionFromRemote(Map<String, dynamic> e) {
-    final idRaw = e['id'] ?? e['pk'];
-    // Stable fallback so rows without an id don't collapse into one "ar-null".
-    final id = idRaw != null
-        ? 'ar-$idRaw'
-        : 'ar-${e['created_at'] ?? ''}-${e['passage_title'] ?? ''}';
+  /// Net speed was not computed server-side before this date; the site shows
+  /// "See In Detail" for those rows and recomputes from the texts.
+  static final legacyNetCutoff = DateTime.utc(2025, 3, 13);
+
+  /// Map one `/learning/typedPassages/` row → [TypingSession].
+  ///
+  /// Field names follow the member-area "Typing History" table:
+  /// `exam_title`, `passage_title`, `typing_date`, `time_duration`
+  /// ("HH:mm:ss" or seconds), `time_taken` (minutes), `key_strokes_given`,
+  /// `key_strokes_typed`, `key_strokes_error`, `target_speed` (0 = NA),
+  /// `gross_speed`, `net_speed`, `qualified`, `total_wrong_words`,
+  /// `passage_text`, `typed_passage_text`.
+  ///
+  /// [fallbackOrder] keeps the API's newest-first order for rows that only
+  /// carry a calendar date (higher = newer).
+  static TypingSession sessionFromRemote(Map<String, dynamic> e,
+      {int fallbackOrder = 0}) {
     final exam = (e['exam_title'] ?? e['exam_name'] ?? 'AR Typing Exam')
         .toString();
     final passage = (e['passage_title'] ?? 'Passage').toString();
-    final created = _parseDate(e['created_at']) ?? DateTime.now();
+
+    final rawDate = e['typing_date'] ?? e['created_at'];
+    var created = _parseDate(rawDate) ?? DateTime.now();
+    final dateOnly = rawDate is String && !rawDate.contains(':');
+    if (dateOnly) {
+      // Same-day rows would otherwise tie; preserve server order.
+      created = created.add(Duration(seconds: fallbackOrder));
+    }
 
     final durationSec = _parseDurationSec(e['time_duration']);
     // Site stores time_taken in minutes (see web: 60 * time_taken * 1000).
@@ -449,15 +501,61 @@ class ArTypingApi {
 
     final keyGiven = _asInt(e['key_strokes_given']) ?? 0;
     final keyTyped = _asInt(e['key_strokes_typed']) ?? 0;
-    final target = _asInt(e['target_speed']) ?? 30;
+    final keyError = _asInt(e['key_strokes_error']);
+    final target = _asInt(e['target_speed']) ?? 0; // 0 = not set ("NA")
     var gross = _asDouble(e['gross_speed']) ?? 0;
-    final net = _asDouble(e['net_speed']) ?? 0;
-    if (gross == 0 && keyTyped > 0 && timeTakenRaw > 0) {
-      gross = keyTyped / (timeTakenRaw * 5);
+    var net = _asDouble(e['net_speed']) ?? 0;
+    final minutes = timeTakenRaw > 0 ? timeTakenRaw : timeTakenSec / 60.0;
+    if (gross == 0 && keyTyped > 0 && minutes > 0) {
+      gross = keyTyped / (minutes * 5); // same fallback as the website
     }
 
+    final expected = _nonEmpty(e['passage_text']);
+    final typed = _nonEmpty(e['typed_passage_text']);
     final wordsTyped = keyTyped / 5.0;
     final backspaces = _asInt(e['back_space_count']) ?? 0;
+
+    // AR rows carry no full/half mistake counts — derive them from the texts.
+    var full = _asInt(e['full_mistake']) ?? _asInt(e['full_mistakes']);
+    var half = _asInt(e['half_mistake']) ?? _asInt(e['half_mistakes']);
+    final legacyNet = net == 0 &&
+        gross > 0 &&
+        created.toUtc().isBefore(legacyNetCutoff);
+    final needsLocal =
+        legacyNet || (keyError == null && e['accuracy'] == null);
+    ScoreBreakdown? local;
+    // Word alignment is O(words²); only run it when AR lacks the numbers.
+    if (needsLocal && expected != null && typed != null) {
+      local = Scoring.evaluate(
+        expected: expected,
+        typed: typed,
+        durationSec: durationSec,
+        timeTakenSec: timeTakenSec,
+        targetWpm: target,
+      );
+      full ??= local.fullMistakes;
+      half ??= local.halfMistakes;
+    }
+    final totalWrong = _asDouble(e['total_wrong_words']) ??
+        ((full ?? 0) + (half ?? 0) * 0.5);
+
+    var note = 'Synced from AR Typing';
+    if (legacyNet && local != null) {
+      net = local.netWpm;
+      note = 'Net speed recalculated on device (AR shows "See In Detail" '
+          'for tests before 13 Mar 2025)';
+    }
+
+    final accuracy = (_asDouble(e['accuracy']) ??
+            (keyError != null && keyTyped > 0
+                ? (keyTyped - keyError) / keyTyped * 100
+                : local?.accuracy ??
+                    (keyTyped == 0
+                        ? 0.0
+                        : (1 - totalWrong / (wordsTyped == 0 ? 1 : wordsTyped)) *
+                            100)))
+        .clamp(0.0, 100.0);
+
     final q = e['qualified'];
     final qualified = q is bool
         ? q
@@ -466,42 +564,36 @@ class ArTypingApi {
             : q is String
                 ? const {'true', '1', 'yes', 'qualified'}
                     .contains(q.trim().toLowerCase())
-                : net >= target;
-    final full =
-        _asInt(e['full_mistake']) ?? _asInt(e['full_mistakes']) ?? 0;
-    final half =
-        _asInt(e['half_mistake']) ?? _asInt(e['half_mistakes']) ?? 0;
-    final totalWrong =
-        _asDouble(e['total_wrong_words']) ?? (full + half * 0.5);
-    final lang = _guessLang(exam, e['language_id']);
+                : (target > 0 && net >= target);
 
-    final expected = e['passage_text']?.toString();
-    final typed = e['typed_passage_text']?.toString();
+    final idRaw = e['id'] ?? e['typing_id'] ?? e['pk'];
+    // The member history endpoint may omit ids; fingerprint the row so the
+    // same result keeps the same id across syncs (needed for notifications).
+    final id = idRaw != null
+        ? 'ar-$idRaw'
+        : 'ar-${rawDate ?? ''}|$exam|$passage|$keyTyped|${e['time_taken']}|'
+            '${e['gross_speed']}|${e['net_speed']}';
 
-    final accuracy = (_asDouble(e['accuracy']) ??
-            (keyTyped == 0
-                ? 0.0
-                : (1 - (totalWrong / (wordsTyped == 0 ? 1 : wordsTyped))) *
-                    100))
-        .clamp(0.0, 100.0);
+    final correctChars = keyError != null
+        ? (keyTyped - keyError).clamp(0, keyTyped)
+        : (keyTyped * (accuracy / 100)).round().clamp(0, keyTyped);
 
     return TypingSession(
       id: id,
       startedAt: created,
       durationSec: durationSec > 0 ? durationSec : 300,
       timeTakenSec: timeTakenSec,
-      language: lang,
+      language: _guessLang(exam, e['language_id'] ?? e['language'], expected),
       mode: 'ar_sync',
       examTitle: exam,
       passageTitle: passage,
       keystrokesGiven: keyGiven,
       typedChars: keyTyped,
-      correctChars: (keyTyped * (accuracy / 100)).round().clamp(0, keyTyped),
-      errors:
-          (keyTyped - (keyTyped * (accuracy / 100)).round()).clamp(0, keyTyped),
+      correctChars: correctChars,
+      errors: keyTyped - correctChars,
       wordsTyped: wordsTyped,
-      fullMistakes: full,
-      halfMistakes: half,
+      fullMistakes: full ?? 0,
+      halfMistakes: half ?? 0,
       totalWrongWords: totalWrong,
       netWrongWords: _asDouble(e['net_wrong_words']) ?? 0,
       backspaceCount: backspaces,
@@ -510,7 +602,8 @@ class ArTypingApi {
       accuracy: accuracy,
       qualified: qualified,
       formulaNote:
-          'Synced from AR Typing · Net ${net.toStringAsFixed(2)} / Gross ${gross.toStringAsFixed(2)} · target $target',
+          '$note · Net ${net.toStringAsFixed(2)} / Gross ${gross.toStringAsFixed(2)}'
+          '${target > 0 ? ' · target $target' : ''}',
       targetWpm: target,
       expectedText: expected,
       typedText: typed,
@@ -518,14 +611,28 @@ class ArTypingApi {
     );
   }
 
-  static String _guessLang(String exam, dynamic languageId) {
+  static String? _nonEmpty(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString();
+    return s.trim().isEmpty ? null : s;
+  }
+
+  static final _devanagari = RegExp('[\u0900-\u097F]');
+
+  static String _guessLang(String exam, dynamic language, [String? text]) {
     final lower = exam.toLowerCase();
     if (lower.contains('hindi') ||
         lower.contains('mangal') ||
         lower.contains('krutidev')) {
       return 'hi';
     }
-    if (languageId == 2 || languageId == '2') return 'hi';
+    if (text != null && _devanagari.hasMatch(text)) return 'hi';
+    if (language is Map) {
+      final name = '${language['name'] ?? language['title'] ?? ''}';
+      if (name.toLowerCase().contains('hindi')) return 'hi';
+      language = language['id'];
+    }
+    if (language == 2 || language == '2') return 'hi';
     return 'en';
   }
 
@@ -540,10 +647,11 @@ class ArTypingApi {
 
   static int _parseDurationSec(dynamic v) {
     if (v == null) return 300;
-    if (v is num) return (v * 60).round(); // minutes
+    if (v is num) return v.round(); // seconds, as on the website
     final s = v.toString().trim();
     final asNum = double.tryParse(s);
-    if (asNum != null) return (asNum * 60).round(); // "5" / "5.0" minutes
+    // The website treats a bare number as seconds (utc(1000 * n)).
+    if (asNum != null) return asNum.round();
     // "HH:MM:SS", "MM:SS", optionally with fractional seconds ("00:05:00.000").
     final parts = s.split(':').map((p) => double.tryParse(p.trim())).toList();
     if (parts.any((p) => p == null)) return 300;

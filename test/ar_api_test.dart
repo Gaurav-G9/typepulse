@@ -46,15 +46,118 @@ void main() {
       expect(s.language, 'hi');
     });
 
-    test('numeric-string duration is minutes; missing id is still unique', () {
+    test('bare-number duration is seconds, as on the website', () {
       final a = ArTypingApi.sessionFromRemote(
-          {'time_duration': '10', 'created_at': '2026-01-01T00:00:00Z'});
+          {'time_duration': '600', 'typing_date': '2026-01-01'});
       final b = ArTypingApi.sessionFromRemote(
-          {'time_duration': 10, 'created_at': '2026-01-02T00:00:00Z'});
+          {'time_duration': 300, 'typing_date': '2026-01-02'});
       expect(a.durationSec, 600);
-      expect(b.durationSec, 600);
+      expect(b.durationSec, 300);
       expect(a.id, isNot(b.id));
       expect(a.id, startsWith('ar-'));
+    });
+
+    test('maps a real member-area typing-history row', () {
+      final row = {
+        'exam_title': 'UPSSSC Assistant English',
+        'exam_slug': 'upsssc-assistant',
+        'passage_title': 'Chronic Stress',
+        'typing_date': '2026-09-20T15:04:05Z',
+        'time_duration': '00:05:00',
+        'time_taken': 4.95,
+        'key_strokes_given': 1500,
+        'key_strokes_typed': 1000,
+        'key_strokes_error': 20,
+        'target_speed': 30,
+        'gross_speed': 40.4,
+        'net_speed': 39.6,
+        'qualified': true,
+        'back_space_count': 12,
+        'passage_text': 'the quick brown fox',
+        'typed_passage_text': 'the quick brwn fox',
+      };
+      final s = ArTypingApi.sessionFromRemote(row);
+      expect(s.startedAt, DateTime.utc(2026, 9, 20, 15, 4, 5).toLocal());
+      expect(s.examTitle, 'UPSSSC Assistant English');
+      expect(s.durationSec, 300);
+      expect(s.timeTakenSec, 297);
+      expect(s.accuracy, closeTo(98, 1e-9)); // from key_strokes_error
+      expect(s.errors, 20);
+      expect(s.wpm, 40.4);
+      expect(s.netWpm, 39.6);
+      expect(s.qualified, isTrue);
+      expect(s.targetWpm, 30);
+      expect(s.expectedText, 'the quick brown fox');
+      // Same row → same id on every sync (drives new-result notifications).
+      expect(ArTypingApi.sessionFromRemote(row).id, s.id);
+    });
+
+    test('target 0 means NA and never counts as qualified', () {
+      final s = ArTypingApi.sessionFromRemote({
+        'typing_date': '2026-09-20',
+        'target_speed': 0,
+        'gross_speed': 20,
+        'net_speed': 18,
+        'key_strokes_typed': 500,
+        'time_taken': 5,
+      });
+      expect(s.targetWpm, 0);
+      expect(s.qualified, isFalse);
+    });
+
+    test('legacy rows with net 0 get net recalculated from the texts', () {
+      final words = List.filled(100, 'word').join(' ');
+      final s = ArTypingApi.sessionFromRemote({
+        'typing_date': '2025-01-10',
+        'time_taken': 2,
+        'gross_speed': 50,
+        'net_speed': 0,
+        'key_strokes_typed': words.length,
+        'passage_text': words,
+        'typed_passage_text': words,
+      });
+      expect(s.netWpm, closeTo(words.length / 5 / 2, 1e-9));
+      expect(s.formulaNote, contains('recalculated'));
+    });
+
+    test('Devanagari passage is detected as Hindi', () {
+      final s = ArTypingApi.sessionFromRemote({
+        'exam_title': 'UPSSSC Assistant',
+        'typing_date': '2026-09-20',
+        'passage_text': 'सुशासन तभी टिकता है',
+      });
+      expect(s.language, 'hi');
+    });
+  });
+
+  group('insight + account', () {
+    test('typing-progress 404 means no activity', () async {
+      final api = ArTypingApi(
+        httpClient: MockClient((req) async {
+          expect(req.url.path, endsWith('/learning/typing-progress/'));
+          expect(req.url.queryParameters['days'], '7');
+          return json({'detail': 'Not found.'}, 404);
+        }),
+      )
+        ..accountId = 'me'
+        ..accessToken = 'tok';
+      expect(await api.fetchTypingProgress(7), isNull);
+    });
+
+    test('users/me is fetched with the JWT header', () async {
+      final api = ArTypingApi(
+        httpClient: MockClient((req) async {
+          expect(req.headers['Authorization'], 'JWT tok');
+          return json({
+            'first_name': 'Asha',
+            'is_subscribed': false,
+          });
+        }),
+      )
+        ..accountId = 'me'
+        ..accessToken = 'tok';
+      final me = await api.fetchMe();
+      expect(me?['is_subscribed'], isFalse);
     });
   });
 

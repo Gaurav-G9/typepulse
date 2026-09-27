@@ -8,6 +8,7 @@ import '../widgets/ios_card.dart';
 import '../widgets/trend_chart.dart';
 import 'account_switcher.dart';
 import 'history_screen.dart';
+import 'insight_screen.dart';
 import 'practice_screen.dart';
 import 'session_detail_screen.dart';
 
@@ -209,13 +210,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       _legendDot(AppColors.ringMove, 'Net WPM'),
                       const SizedBox(width: 14),
                       _legendDot(AppColors.ringStand, 'Accuracy'),
-                      const Spacer(),
-                      Text(
-                        store.arConnected
-                            ? (store.activeAccount?.email ?? 'AR synced')
-                            : 'Local + sample',
-                        style: TextStyle(
-                            fontSize: 11, color: AppColors.secondaryLabel),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          store.arConnected
+                              ? (store.activeAccount?.email ?? 'AR synced')
+                              : 'Local + sample',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                              fontSize: 11, color: AppColors.secondaryLabel),
+                        ),
                       ),
                     ]),
                   ),
@@ -266,9 +272,8 @@ class _HomeScreenState extends State<HomeScreen> {
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-            child: Row(children: [
+            child: Wrap(spacing: 8, runSpacing: 8, children: [
               _insightChip('${store.streak} day streak', AppColors.orange),
-              const SizedBox(width: 8),
               _insightChip(
                   '${store.qualifiedCount} qualified', AppColors.green),
             ]),
@@ -301,6 +306,40 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: _btn(
                       'Live', const Color(0xFF32ADE6), widget.onOpenLive)),
             ]),
+          ),
+        ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: IosCard(
+              onTap: () => Navigator.of(context).push(
+                CupertinoPageRoute(
+                    builder: (_) => InsightScreen(store: store)),
+              ),
+              child: Row(children: [
+                const Icon(CupertinoIcons.chart_bar_alt_fill,
+                    color: AppColors.indigo),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Typing Insight',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.label)),
+                      Text(
+                        'Best speeds, daily progress & misspelled words from AR Typing',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.secondaryLabel),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(CupertinoIcons.chevron_right,
+                    size: 16, color: AppColors.tertiaryLabel),
+              ]),
+            ),
           ),
         ),
         SliverToBoxAdapter(
@@ -440,13 +479,24 @@ class _HomeScreenState extends State<HomeScreen> {
           height: 8,
           decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
       const SizedBox(width: 8),
-      Text('$title  ',
-          style: TextStyle(fontSize: 13, color: AppColors.secondaryLabel)),
-      Text(value,
-          style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: AppColors.label)),
+      Flexible(
+        child: Text.rich(
+          TextSpan(children: [
+            TextSpan(
+                text: '$title  ',
+                style:
+                    TextStyle(fontSize: 13, color: AppColors.secondaryLabel)),
+            TextSpan(
+                text: value,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.label)),
+          ]),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
     ]);
   }
 

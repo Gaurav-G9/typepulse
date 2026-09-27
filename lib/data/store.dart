@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../models/ar_account.dart';
 import '../models/leaderboard_entry.dart';
 import '../models/session.dart';
+import '../models/typing_insight.dart';
 import '../models/user_profile.dart';
 import '../services/background_bootstrap.dart';
 import '../services/background_sync.dart';
@@ -43,6 +44,8 @@ class AppStore extends ChangeNotifier {
   String? arError;
   Map<String, dynamic>? arRemoteProfile;
   Map<String, dynamic>? arMemberStats;
+  Map<String, dynamic>? arUserInfo; // /users/me/ — plan / subscription
+  final Map<int, TypingInsight?> _insightCache = {};
 
   Timer? _syncTimer;
   bool _foreground = true;
@@ -101,6 +104,7 @@ class AppStore extends ChangeNotifier {
   String _sessionsKey(String id) => 'tp_sessions_$id';
   String _statsKey(String id) => 'tp_member_stats_$id';
   String _remoteProfileKey(String id) => 'tp_remote_profile_$id';
+  String _userInfoKey(String id) => 'tp_user_me_$id';
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -233,6 +237,8 @@ class AppStore extends ChangeNotifier {
     sessions = _decodeSessions(prefs.getString(_sessionsKey(id))) ?? [];
     arMemberStats = _decodeMap(prefs.getString(_statsKey(id)));
     arRemoteProfile = _decodeMap(prefs.getString(_remoteProfileKey(id)));
+    arUserInfo = _decodeMap(prefs.getString(_userInfoKey(id)));
+    _insightCache.clear();
 
     _ensureSeedHistory();
   }
@@ -284,6 +290,9 @@ class AppStore extends ChangeNotifier {
     if (arRemoteProfile != null) {
       await prefs.setString(
           _remoteProfileKey(id), jsonEncode(arRemoteProfile));
+    }
+    if (arUserInfo != null) {
+      await prefs.setString(_userInfoKey(id), jsonEncode(arUserInfo));
     }
     await _persistAccounts(prefs);
   }
@@ -350,6 +359,7 @@ class AppStore extends ChangeNotifier {
         sessions = _decodeSessions(prefs.getString(_sessionsKey(id))) ?? [];
         arMemberStats = _decodeMap(prefs.getString(_statsKey(id)));
         arRemoteProfile = _decodeMap(prefs.getString(_remoteProfileKey(id)));
+        arUserInfo = _decodeMap(prefs.getString(_userInfoKey(id)));
       } else {
         final localName = email.trim().split('@').first;
         profile = UserProfile(
@@ -363,7 +373,9 @@ class AppStore extends ChangeNotifier {
         sessions = [];
         arMemberStats = null;
         arRemoteProfile = null;
+        arUserInfo = null;
       }
+      _insightCache.clear();
 
       arStatusMessage = 'Signed in — syncing history…';
       notifyListeners();
@@ -414,6 +426,7 @@ class AppStore extends ChangeNotifier {
     await prefs.remove(_sessionsKey(id));
     await prefs.remove(_statsKey(id));
     await prefs.remove(_remoteProfileKey(id));
+    await prefs.remove(_userInfoKey(id));
 
     accounts = accounts.where((a) => a.id != id).toList();
 
@@ -432,6 +445,8 @@ class AppStore extends ChangeNotifier {
         arConnected = false;
         arRemoteProfile = null;
         arMemberStats = null;
+        arUserInfo = null;
+        _insightCache.clear();
         profile = UserProfile.guest.copyWith(
           targetWpm: 30,
           dailyGoalMinutes: 25,
@@ -462,6 +477,8 @@ class AppStore extends ChangeNotifier {
       arConnected = false;
       arRemoteProfile = null;
       arMemberStats = null;
+      arUserInfo = null;
+      _insightCache.clear();
       arStatusMessage = 'Signed out of AR Typing';
       arError = null;
       arSyncing = false;
@@ -541,21 +558,31 @@ class AppStore extends ChangeNotifier {
         if (e.freeMode) freeModeNote = e.message;
       }
 
+      Map<String, dynamic>? userInfo;
+      try {
+        userInfo = await arApi.fetchMe();
+      } on ArApiException catch (e) {
+        if (e.needsReauth) rethrow;
+      }
+
       final remote = await arApi.fetchAllHistory(maxPages: 15, pageSize: 100);
       if (stale()) return 0;
 
       final mapped = <TypingSession>[];
-      for (final row in remote) {
+      for (var i = 0; i < remote.length; i++) {
         try {
-          mapped.add(ArTypingApi.sessionFromRemote(row));
+          mapped.add(ArTypingApi.sessionFromRemote(remote[i],
+              fallbackOrder: remote.length - i));
         } catch (_) {
           // Skip a malformed row rather than failing the whole sync.
         }
       }
 
-      if (remoteProfile != null) {
-        arRemoteProfile = remoteProfile;
-        final name = _pickName(remoteProfile);
+      if (userInfo != null) arUserInfo = userInfo;
+      _insightCache.clear(); // new results → insights may have changed
+      if (remoteProfile != null || userInfo != null) {
+        if (remoteProfile != null) arRemoteProfile = remoteProfile;
+        final name = _pickName(remoteProfile) ?? _pickName(userInfo);
         if (name != null && name.isNotEmpty) {
           profile = profile.copyWith(name: name);
           accounts = accounts
@@ -755,25 +782,70 @@ class AppStore extends ChangeNotifier {
 
   String? _pickName(Map<String, dynamic>? p) {
     if (p == null) return null;
-    for (final k in [
-      'full_name',
-      'name',
-      'student_name',
-      'first_name',
-      'display_name',
-    ]) {
+    for (final k in ['full_name', 'name', 'student_name', 'display_name']) {
       final v = p[k];
       if (v is String && v.trim().isNotEmpty) return v.trim();
     }
     final first = p['first_name'];
     final last = p['last_name'];
-    if (first is String) {
+    if (first is String && first.trim().isNotEmpty) {
       return '${first.trim()} ${last is String ? last.trim() : ''}'.trim();
+    }
+    // /users/me/ and the student profile nest the person under these keys.
+    for (final k in ['student', 'user']) {
+      final nested = p[k];
+      if (nested is Map<String, dynamic>) {
+        final n = _pickName(nested);
+        if (n != null) return n;
+      }
     }
     return null;
   }
 
+  // ─── AR plan (/users/me/) ───────────────────────────────────────────────
+
+  /// null when unknown (not synced yet).
+  bool? get arSubscribed {
+    final u = arUserInfo;
+    if (u == null) return null;
+    final v = u['is_subscribed'];
+    if (v is bool) return v;
+    final sub = u['subscription'];
+    if (sub is Map && sub.isNotEmpty) return true;
+    return null;
+  }
+
+  String? get arPlanTitle {
+    final sub = arUserInfo?['subscription'];
+    if (sub is Map) {
+      final t = sub['title'] ?? sub['name'];
+      if (t is String && t.trim().isNotEmpty) return t.trim();
+    }
+    final s = arSubscribed;
+    if (s == null) return null;
+    return s ? 'Subscribed' : 'Free Mode';
+  }
+
+  // ─── Typing Insight (/learning/typing-progress/) ───────────────────────
+
+  /// Cached per interval until the next sync; [force] re-fetches.
+  /// Returns null when AR has no activity in that window.
+  Future<TypingInsight?> loadInsight(int days, {bool force = false}) async {
+    if (!force && _insightCache.containsKey(days)) return _insightCache[days];
+    final accountAtStart = activeAccountId;
+    final raw = await arApi.fetchTypingProgress(days);
+    final insight = raw == null ? null : TypingInsight.fromJson(days, raw);
+    if (activeAccountId == accountAtStart) _insightCache[days] = insight;
+    return insight;
+  }
+
   // ─── Member stats helpers for Summary cards ─────────────────────────────
+
+  static double? _statNum(dynamic v) {
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v.trim());
+    return null;
+  }
 
   int? get remoteTotalTests {
     final s = arMemberStats;
@@ -786,7 +858,8 @@ class AppStore extends ChangeNotifier {
       'tests_count',
     ]) {
       final v = s[k];
-      if (v is num) return v.toInt();
+      final n = _statNum(v);
+      if (n != null) return n.round();
     }
     return null;
   }
@@ -801,7 +874,8 @@ class AppStore extends ChangeNotifier {
       'gross_speed_avg',
     ]) {
       final v = s[k];
-      if (v is num) return v.toDouble();
+      final n = _statNum(v);
+      if (n != null) return n;
     }
     return null;
   }
@@ -816,7 +890,8 @@ class AppStore extends ChangeNotifier {
       'net_speed_avg',
     ]) {
       final v = s[k];
-      if (v is num) return v.toDouble();
+      final n = _statNum(v);
+      if (n != null) return n;
     }
     return null;
   }
@@ -825,12 +900,14 @@ class AppStore extends ChangeNotifier {
     final s = arMemberStats;
     if (s == null) return null;
     for (final k in [
+      'avg_accuracy_percentage', // what memberTypingStats actually returns
       'avg_accuracy',
       'average_accuracy',
       'accuracy_avg',
     ]) {
       final v = s[k];
-      if (v is num) return v.toDouble();
+      final n = _statNum(v);
+      if (n != null) return n;
     }
     return null;
   }

@@ -65,8 +65,8 @@ void main() {
   test('penalty applies only beyond the error allowance', () {
     // 6 wrong words, allowance 5 → excess 1 → net wrong 1 + 1×5 = 6.
     final exp = List.generate(20, (i) => 'alpha$i').join(' ');
-    final typed = List.generate(20, (i) => i < 6 ? 'zzzzzz$i' : 'alpha$i')
-        .join(' ');
+    final typed =
+        List.generate(20, (i) => i < 6 ? 'zzzzzz$i' : 'alpha$i').join(' ');
     final b = score(exp, typed);
     expect(b.fullMistakes, 6);
     expect(b.netWrongWords, 6);

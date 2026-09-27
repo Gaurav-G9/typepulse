@@ -81,9 +81,10 @@ class BackgroundSync {
     }
 
     final mapped = <TypingSession>[];
-    for (final row in remote) {
+    for (var i = 0; i < remote.length; i++) {
       try {
-        mapped.add(ArTypingApi.sessionFromRemote(row));
+        mapped.add(ArTypingApi.sessionFromRemote(remote[i],
+            fallbackOrder: remote.length - i));
       } catch (_) {}
     }
 

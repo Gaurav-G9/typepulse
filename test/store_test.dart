@@ -57,8 +57,7 @@ void main() {
     test('streak survives until the first test of today', () {
       final store = AppStore();
       final now = DateTime.now();
-      DateTime daysAgo(int n) =>
-          DateTime(now.year, now.month, now.day - n, 12);
+      DateTime daysAgo(int n) => DateTime(now.year, now.month, now.day - n, 12);
       store.sessions = [
         session('a', daysAgo(1)),
         session('b', daysAgo(2)),
@@ -87,6 +86,7 @@ void main() {
 
   group('AR sync', () {
     late int historyCalls;
+    late int insightCalls;
     late Completer<void>? gate;
 
     MockClient client() => MockClient((req) async {
@@ -106,7 +106,43 @@ void main() {
           }
           if (path.endsWith('/profile/')) return json({'full_name': 'Asha'});
           if (path.endsWith('/memberTypingStats/')) {
-            return json({'total_tests': 2});
+            return json({
+              'total_tests': 2,
+              'avg_gross_speed': '40.50',
+              'avg_net_speed': 39.25,
+              'avg_accuracy_percentage': 97.5,
+            });
+          }
+          if (path.endsWith('/users/me/')) {
+            return json({
+              'first_name': 'Asha',
+              'is_subscribed': true,
+              'subscription': {'title': 'Gold 3 Months'},
+            });
+          }
+          if (path.endsWith('/typing-progress/')) {
+            insightCalls++;
+            return json({
+              'passage_count': 5,
+              'min_achieved_count': 3,
+              'avg_gross_speed': 41.2,
+              'avg_net_speed': 39.8,
+              'best_gross_speed_data': {
+                'gross_speed': 45.1,
+                'corresponding_net_speed': 44.0,
+              },
+              'best_net_speed_data': {'net_speed': 44.5},
+              'best_gross_speed_list': [40, 42.5, 45.1],
+              'exam_title': 'UPSSSC, SSC CHSL',
+              'target_speed': '30, 35',
+              'time_duration': '10:00, 15:00',
+              'typing_dates': '2026-09-20',
+              'most_misspelled_words': {
+                'recieve': {'correct': 'receive', 'count': 3},
+                'teh': {'correct': 'the', 'count': 5},
+              },
+              'most_deleted_words': {'a': 2},
+            });
           }
           return json({}, 404);
         });
@@ -132,6 +168,7 @@ void main() {
 
     setUp(() {
       historyCalls = 0;
+      insightCalls = 0;
       gate = null;
     });
 
@@ -142,6 +179,28 @@ void main() {
       expect(store.sessions.any((s) => s.id.startsWith('seed-')), isFalse);
       expect(store.profile.name, 'Asha');
       expect(store.remoteTotalTests, 2);
+      store.dispose();
+    });
+
+    test('member stats, plan and insight match the website schema', () async {
+      final store = await loadedStore();
+      await store.syncArHistory();
+      expect(store.remoteAvgAccuracy, 97.5);
+      expect(store.remoteAvgGross, 40.5);
+      expect(store.arPlanTitle, 'Gold 3 Months');
+      expect(store.arSubscribed, isTrue);
+
+      final insight = await store.loadInsight(7);
+      expect(insight!.passageCount, 5);
+      expect(insight.bestGross!.speed, 45.1);
+      expect(insight.bestGross!.other, 44.0);
+      expect(insight.dailyBestGross, [40, 42.5, 45.1]);
+      expect(insight.exams.map((e) => e.title), ['UPSSSC', 'SSC CHSL']);
+      expect(insight.exams.last.targetWpm, 35);
+      expect(insight.misspelled.first.word, 'teh');
+      expect(insight.misspelled.first.correct, 'the');
+      await store.loadInsight(7); // cached
+      expect(insightCalls, 1);
       store.dispose();
     });
 
@@ -166,7 +225,8 @@ void main() {
       expect(store.activeAccountId, 'b@x.com');
       expect(store.sessions.where((s) => s.id.startsWith('ar-')), isEmpty);
       final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('tp_sessions_b@x.com') ?? '', isNot(contains('ar-1')));
+      expect(prefs.getString('tp_sessions_b@x.com') ?? '',
+          isNot(contains('ar-1')));
       store.dispose();
     });
 
