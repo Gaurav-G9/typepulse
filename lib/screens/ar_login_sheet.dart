@@ -58,9 +58,9 @@ class _ArLoginSheetState extends State<ArLoginSheet> {
   Widget build(BuildContext context) {
     return Container(
       height: MediaQuery.of(context).size.height * 0.72,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.canvas,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: SafeArea(
         top: false,
@@ -83,8 +83,8 @@ class _ArLoginSheetState extends State<ArLoginSheet> {
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Sign in with your artypingplatform.com account. TypePulse pulls history and presents it as Fitness-style workouts — your password is stored only in secure device storage.',
+            Text(
+              'Sign in with your artypingplatform.com account. You can add multiple accounts on this device. JWTs are stored in secure storage (never your password after login).',
               style: TextStyle(fontSize: 13, color: AppColors.secondaryLabel, height: 1.35),
             ),
             const SizedBox(height: 20),

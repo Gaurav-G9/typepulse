@@ -1,101 +1,272 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/ar_account.dart';
 import '../models/leaderboard_entry.dart';
 import '../models/session.dart';
 import '../models/user_profile.dart';
+import '../services/notification_service.dart';
+import '../theme/app_colors.dart';
 import 'ar_api.dart';
 import 'scoring.dart';
-import '../theme/app_colors.dart';
 
 class AppStore extends ChangeNotifier {
-  static const _kProfile = 'tp_profile';
-  static const _kSessions = 'tp_sessions';
+  static const _kAccounts = 'tp_accounts';
+  static const _kActiveAccountId = 'tp_active_account_id';
+  static const _kDarkMode = 'tp_dark_mode';
+  // Legacy single-account keys.
+  static const _kLegacyProfile = 'tp_profile';
+  static const _kLegacySessions = 'tp_sessions';
+
+  List<ArAccount> accounts = [];
+  String? activeAccountId;
 
   UserProfile profile = UserProfile.guest;
   List<TypingSession> sessions = [];
   bool loaded = false;
+  bool darkMode = false;
 
   final ArTypingApi arApi = ArTypingApi();
   bool arConnected = false;
   bool arSyncing = false;
+  bool refreshing = false;
   String? arStatusMessage;
   String? arError;
   Map<String, dynamic>? arRemoteProfile;
   Map<String, dynamic>? arMemberStats;
 
+  Timer? _syncTimer;
+  bool _foreground = true;
+  bool _autoSyncRunning = false;
+
+  ArAccount? get activeAccount {
+    if (activeAccountId == null) return null;
+    try {
+      return accounts.firstWhere((a) => a.id == activeAccountId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _profileKey(String id) => 'tp_profile_$id';
+  String _sessionsKey(String id) => 'tp_sessions_$id';
+  String _statsKey(String id) => 'tp_member_stats_$id';
+  String _remoteProfileKey(String id) => 'tp_remote_profile_$id';
+
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    final p = prefs.getString(_kProfile);
+
+    darkMode = prefs.getBool(_kDarkMode) ?? false;
+    AppColors.dark = darkMode;
+
+    await _loadAccounts(prefs);
+    await _migrateLegacyIfNeeded(prefs);
+
+    if (activeAccountId != null &&
+        accounts.any((a) => a.id == activeAccountId)) {
+      await _loadActiveAccountData(prefs);
+    } else if (accounts.isNotEmpty) {
+      activeAccountId = accounts.first.id;
+      await prefs.setString(_kActiveAccountId, activeAccountId!);
+      await _loadActiveAccountData(prefs);
+    } else {
+      // Local-only guest until an AR account is added.
+      final p = prefs.getString(_kLegacyProfile);
+      if (p != null) {
+        profile = UserProfile.fromJson(jsonDecode(p) as Map<String, dynamic>);
+        darkMode = profile.darkMode;
+        AppColors.dark = darkMode;
+        await prefs.setBool(_kDarkMode, darkMode);
+      } else {
+        profile = UserProfile.guest.copyWith(targetWpm: 30, dailyGoalMinutes: 25);
+      }
+      final s = prefs.getString(_kLegacySessions);
+      if (s != null) {
+        final list = jsonDecode(s) as List<dynamic>;
+        sessions = list
+            .map((e) => TypingSession.fromJson(e as Map<String, dynamic>))
+            .toList()
+          ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+      }
+      _ensureSeedHistory();
+      await _persistLocalGuest(prefs);
+    }
+
+    arConnected = arApi.isLoggedIn;
+    loaded = true;
+    notifyListeners();
+
+    try {
+      await NotificationService.instance.init();
+    } catch (_) {}
+
+    startAutoSync();
+    if (arApi.isLoggedIn) {
+      // Initial quiet pull so Summary is fresh after cold start.
+      unawaited(syncArHistory(notifyOnNew: false, quiet: true));
+    }
+  }
+
+  Future<void> _loadAccounts(SharedPreferences prefs) async {
+    final raw = prefs.getString(_kAccounts);
+    if (raw != null) {
+      final list = jsonDecode(raw) as List<dynamic>;
+      accounts = list
+          .map((e) => ArAccount.fromJson(e as Map<String, dynamic>))
+          .toList();
+    }
+    activeAccountId = prefs.getString(_kActiveAccountId);
+  }
+
+  Future<void> _migrateLegacyIfNeeded(SharedPreferences prefs) async {
+    if (accounts.isNotEmpty) return;
+    final legacy = await arApi.readLegacyTokens();
+    final email = legacy['email'];
+    final access = legacy['access'];
+    if (email == null || email.isEmpty || access == null || access.isEmpty) {
+      return;
+    }
+    final id = ArAccount.idFromEmail(email);
+    await arApi.migrateLegacyTokens(id, email);
+    final name = prefs.getString(_kLegacyProfile) != null
+        ? (UserProfile.fromJson(
+                jsonDecode(prefs.getString(_kLegacyProfile)!)
+                    as Map<String, dynamic>)
+            .name)
+        : email.split('@').first;
+    accounts = [ArAccount(id: id, email: email, displayName: name)];
+    activeAccountId = id;
+    await prefs.setString(_kAccounts, jsonEncode(accounts.map((a) => a.toJson()).toList()));
+    await prefs.setString(_kActiveAccountId, id);
+
+    // Move legacy profile/sessions into per-account keys.
+    final lp = prefs.getString(_kLegacyProfile);
+    if (lp != null) {
+      await prefs.setString(_profileKey(id), lp);
+      final up = UserProfile.fromJson(jsonDecode(lp) as Map<String, dynamic>);
+      darkMode = up.darkMode;
+      await prefs.setBool(_kDarkMode, darkMode);
+    }
+    final ls = prefs.getString(_kLegacySessions);
+    if (ls != null) await prefs.setString(_sessionsKey(id), ls);
+  }
+
+  Future<void> _loadActiveAccountData(SharedPreferences prefs) async {
+    final id = activeAccountId!;
+    final acct = activeAccount!;
+    await arApi.loadAccount(id, emailHint: acct.email);
+    arConnected = arApi.isLoggedIn;
+
+    final p = prefs.getString(_profileKey(id));
     if (p != null) {
       profile = UserProfile.fromJson(jsonDecode(p) as Map<String, dynamic>);
     } else {
-      profile = UserProfile.guest.copyWith(targetWpm: 30, dailyGoalMinutes: 25);
+      profile = UserProfile(
+        id: id,
+        name: acct.displayName,
+        handle: '@${acct.email.split('@').first}',
+        targetWpm: 30,
+        dailyGoalMinutes: 25,
+        darkMode: darkMode,
+      );
     }
-    // Ensure UPSSSC-aligned defaults for older profiles.
-    if (profile.targetWpm == 40 && !profile.seededFromArHistory) {
-      profile = profile.copyWith(targetWpm: 30);
-    }
+    // Theme is device-global, not per-account.
+    profile = profile.copyWith(darkMode: darkMode);
 
-    final s = prefs.getString(_kSessions);
+    final s = prefs.getString(_sessionsKey(id));
     if (s != null) {
       final list = jsonDecode(s) as List<dynamic>;
       sessions = list
           .map((e) => TypingSession.fromJson(e as Map<String, dynamic>))
           .toList()
         ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+    } else {
+      sessions = [];
     }
 
-    await arApi.loadStoredSession();
-    arConnected = arApi.isLoggedIn;
+    final st = prefs.getString(_statsKey(id));
+    arMemberStats = st != null ? jsonDecode(st) as Map<String, dynamic> : null;
+    final rp = prefs.getString(_remoteProfileKey(id));
+    arRemoteProfile =
+        rp != null ? jsonDecode(rp) as Map<String, dynamic> : null;
 
+    _ensureSeedHistory();
+  }
+
+  void _ensureSeedHistory() {
     final needsSeed = !profile.seededFromArHistory &&
         (sessions.isEmpty ||
             (sessions.length <= 1 &&
                 sessions.every((e) =>
                     e.id == 'sample-upsssc' || e.source == 'local')));
-    if (needsSeed) {
+    if (needsSeed || sessions.isEmpty) {
       sessions = seedHistory();
       profile = profile.copyWith(seededFromArHistory: true);
-      await _persist();
-    } else if (sessions.isEmpty) {
-      sessions = seedHistory();
-      profile = profile.copyWith(seededFromArHistory: true);
-      await _persist();
     }
-
-    AppColors.dark = profile.darkMode;
-    loaded = true;
-    notifyListeners();
   }
 
-  Future<void> _persist() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kProfile, jsonEncode(profile.toJson()));
+  Future<void> _persistAccounts(SharedPreferences prefs) async {
     await prefs.setString(
-      _kSessions,
+      _kAccounts,
+      jsonEncode(accounts.map((a) => a.toJson()).toList()),
+    );
+    if (activeAccountId != null) {
+      await prefs.setString(_kActiveAccountId, activeAccountId!);
+    } else {
+      await prefs.remove(_kActiveAccountId);
+    }
+  }
+
+  Future<void> _persistActive() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kDarkMode, darkMode);
+    final id = activeAccountId;
+    if (id == null) {
+      await _persistLocalGuest(prefs);
+      return;
+    }
+    await prefs.setString(_profileKey(id), jsonEncode(profile.toJson()));
+    await prefs.setString(
+      _sessionsKey(id),
       jsonEncode(sessions.map((e) => e.toJson()).toList()),
     );
+    if (arMemberStats != null) {
+      await prefs.setString(_statsKey(id), jsonEncode(arMemberStats));
+    }
+    if (arRemoteProfile != null) {
+      await prefs.setString(
+          _remoteProfileKey(id), jsonEncode(arRemoteProfile));
+    }
+    await _persistAccounts(prefs);
+  }
+
+  Future<void> _persistLocalGuest(SharedPreferences prefs) async {
+    await prefs.setString(_kLegacyProfile, jsonEncode(profile.toJson()));
+    await prefs.setString(
+      _kLegacySessions,
+      jsonEncode(sessions.map((e) => e.toJson()).toList()),
+    );
+    await prefs.setBool(_kDarkMode, darkMode);
   }
 
   Future<void> updateProfile(UserProfile next) async {
-    profile = next;
-    AppColors.dark = profile.darkMode;
-    await _persist();
+    profile = next.copyWith(darkMode: darkMode);
+    await _persistActive();
     notifyListeners();
   }
 
   Future<void> addSession(TypingSession session) async {
     sessions = [session, ...sessions];
-    await _persist();
+    await _persistActive();
     notifyListeners();
   }
 
-  // ─── AR Typing connect / sync ───────────────────────────────────────────
+  // ─── Multi-account ──────────────────────────────────────────────────────
 
   Future<bool> arLogin(String email, String password) async {
     arError = null;
@@ -103,11 +274,61 @@ class AppStore extends ChangeNotifier {
     arSyncing = true;
     notifyListeners();
     try {
-      await arApi.login(email: email, password: password);
+      final id = ArAccount.idFromEmail(email);
+      // Persist current account before switching.
+      if (activeAccountId != null && activeAccountId != id) {
+        await _persistActive();
+      }
+
+      await arApi.login(email: email, password: password, accountId: id);
       arConnected = true;
+
+      final existing = accounts.where((a) => a.id == id).toList();
+      if (existing.isEmpty) {
+        accounts = [
+          ...accounts,
+          ArAccount(
+            id: id,
+            email: email.trim(),
+            displayName: email.trim().split('@').first,
+          ),
+        ];
+      }
+      activeAccountId = id;
+
+      final prefs = await SharedPreferences.getInstance();
+      await _persistAccounts(prefs);
+
+      // Load any previously cached data for this account, else fresh profile.
+      final cached = prefs.getString(_profileKey(id));
+      if (cached != null) {
+        profile = UserProfile.fromJson(jsonDecode(cached) as Map<String, dynamic>)
+            .copyWith(darkMode: darkMode);
+        final s = prefs.getString(_sessionsKey(id));
+        if (s != null) {
+          sessions = (jsonDecode(s) as List<dynamic>)
+              .map((e) => TypingSession.fromJson(e as Map<String, dynamic>))
+              .toList()
+            ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+        } else {
+          sessions = [];
+        }
+      } else {
+        final localName = email.trim().split('@').first;
+        profile = UserProfile(
+          id: id,
+          name: localName,
+          handle: '@$localName',
+          targetWpm: 30,
+          dailyGoalMinutes: 25,
+          darkMode: darkMode,
+        );
+        sessions = [];
+      }
+
       arStatusMessage = 'Signed in — syncing history…';
       notifyListeners();
-      await syncArHistory();
+      await syncArHistory(notifyOnNew: false);
       return true;
     } on ArApiException catch (e) {
       arError = e.message;
@@ -124,7 +345,70 @@ class AppStore extends ChangeNotifier {
     }
   }
 
+  Future<void> switchAccount(String id) async {
+    if (id == activeAccountId) return;
+    if (!accounts.any((a) => a.id == id)) return;
+
+    await _persistActive();
+    activeAccountId = id;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kActiveAccountId, id);
+    await _loadActiveAccountData(prefs);
+    arError = null;
+    arStatusMessage = 'Switched to ${activeAccount?.displayName ?? id}';
+    notifyListeners();
+
+    // Quiet refresh for the newly active account.
+    if (arApi.isLoggedIn) {
+      unawaited(syncArHistory(notifyOnNew: false, quiet: true));
+    }
+  }
+
+  Future<void> removeAccount(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await arApi.deleteTokensFor(id);
+    await prefs.remove(_profileKey(id));
+    await prefs.remove(_sessionsKey(id));
+    await prefs.remove(_statsKey(id));
+    await prefs.remove(_remoteProfileKey(id));
+
+    accounts = accounts.where((a) => a.id != id).toList();
+
+    if (activeAccountId == id) {
+      if (accounts.isNotEmpty) {
+        activeAccountId = accounts.first.id;
+        await prefs.setString(_kActiveAccountId, activeAccountId!);
+        await _loadActiveAccountData(prefs);
+      } else {
+        activeAccountId = null;
+        await prefs.remove(_kActiveAccountId);
+        arApi.accountId = null;
+        arApi.accessToken = null;
+        arApi.refreshToken = null;
+        arApi.email = null;
+        arConnected = false;
+        arRemoteProfile = null;
+        arMemberStats = null;
+        profile = UserProfile.guest.copyWith(
+          targetWpm: 30,
+          dailyGoalMinutes: 25,
+          darkMode: darkMode,
+        );
+        sessions = seedHistory();
+        profile = profile.copyWith(seededFromArHistory: true);
+      }
+    }
+
+    await _persistAccounts(prefs);
+    await _persistActive();
+    arStatusMessage = 'Account removed';
+    arError = null;
+    notifyListeners();
+  }
+
   Future<void> arLogout() async {
+    // Logout only clears tokens for the active account; keep it in the list
+    // so the user can re-auth, or remove via account switcher.
     arSyncing = true;
     notifyListeners();
     try {
@@ -137,29 +421,58 @@ class AppStore extends ChangeNotifier {
       arError = null;
       arSyncing = false;
       notifyListeners();
-      await _persist();
+      await _persistActive();
     }
   }
 
-  Future<int> syncArHistory() async {
+  // ─── Sync / refresh ─────────────────────────────────────────────────────
+
+  Future<int> syncArHistory({
+    bool notifyOnNew = false,
+    bool quiet = false,
+  }) async {
     if (!arApi.isLoggedIn) {
-      arError = 'Sign in to AR Typing first.';
-      notifyListeners();
+      if (!quiet) {
+        arError = 'Sign in to AR Typing first.';
+        notifyListeners();
+      }
       return 0;
     }
-    arSyncing = true;
-    arError = null;
-    arStatusMessage = 'Fetching typing history…';
-    notifyListeners();
+    if (!quiet) {
+      arSyncing = true;
+      arError = null;
+      arStatusMessage = 'Fetching typing history…';
+      notifyListeners();
+    }
+
+    final previousIds = sessions.map((s) => s.id).toSet();
+    final previousCount = sessions
+        .where((s) => s.source == 'ar' || s.id.startsWith('ar-'))
+        .length;
+
     try {
       try {
         arRemoteProfile = await arApi.fetchProfile();
         final name = _pickName(arRemoteProfile);
         if (name != null && name.isNotEmpty) {
           profile = profile.copyWith(name: name);
+          // Update display name on account card.
+          if (activeAccountId != null) {
+            accounts = accounts
+                .map((a) => a.id == activeAccountId
+                    ? a.copyWith(displayName: name)
+                    : a)
+                .toList();
+          }
         }
       } on ArApiException catch (e) {
-        if (e.freeMode) {
+        if (e.needsReauth) {
+          arConnected = false;
+          arError = e.message;
+          notifyListeners();
+          return 0;
+        }
+        if (e.freeMode && !quiet) {
           arStatusMessage = e.message;
         }
       }
@@ -167,18 +480,23 @@ class AppStore extends ChangeNotifier {
       try {
         arMemberStats = await arApi.fetchMemberStats();
       } on ArApiException catch (e) {
-        if (e.freeMode) {
+        if (e.needsReauth) {
+          arConnected = false;
+          arError = e.message;
+          notifyListeners();
+          return 0;
+        }
+        if (e.freeMode && !quiet) {
           arError = e.message;
         }
       }
 
-      final remote = await arApi.fetchAllHistory(maxPages: 8, pageSize: 40);
+      final remote = await arApi.fetchAllHistory(maxPages: 15, pageSize: 100);
       final mapped = remote.map(ArTypingApi.sessionFromRemote).toList();
 
-      // Keep local (non-ar) sessions; replace ar_* with fresh sync.
-      final localOnly =
-          sessions.where((s) => s.source != 'ar' && !s.id.startsWith('ar-')).toList();
-      // Drop illustrative seed once real AR data arrives.
+      final localOnly = sessions
+          .where((s) => s.source != 'ar' && !s.id.startsWith('ar-'))
+          .toList();
       final keptLocal = mapped.isEmpty
           ? localOnly
           : localOnly
@@ -189,22 +507,116 @@ class AppStore extends ChangeNotifier {
         ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
 
       profile = profile.copyWith(seededFromArHistory: true);
-      await _persist();
-      arStatusMessage =
-          'Synced ${mapped.length} AR workout${mapped.length == 1 ? '' : 's'}';
+      await _persistActive();
+
+      if (notifyOnNew) {
+        await _notifyNewResults(previousIds, previousCount, mapped);
+      }
+
+      if (!quiet) {
+        arStatusMessage =
+            'Synced ${mapped.length} AR workout${mapped.length == 1 ? '' : 's'}';
+      }
       return mapped.length;
     } on ArApiException catch (e) {
-      arError = e.message;
-      arStatusMessage = null;
+      if (e.needsReauth) arConnected = false;
+      if (!quiet) {
+        arError = e.message;
+        arStatusMessage = null;
+      }
       return 0;
     } catch (e) {
-      arError = 'Sync failed. Try again.';
-      arStatusMessage = null;
+      if (!quiet) {
+        arError = 'Sync failed. Try again.';
+        arStatusMessage = null;
+      }
       return 0;
     } finally {
-      arSyncing = false;
+      if (!quiet) arSyncing = false;
       notifyListeners();
     }
+  }
+
+  Future<void> manualRefresh() async {
+    if (!arApi.isLoggedIn) {
+      arError = 'Sign in to AR Typing first.';
+      notifyListeners();
+      return;
+    }
+    refreshing = true;
+    notifyListeners();
+    try {
+      await syncArHistory(notifyOnNew: true, quiet: false);
+    } finally {
+      refreshing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _notifyNewResults(
+    Set<String> previousIds,
+    int previousCount,
+    List<TypingSession> mapped,
+  ) async {
+    final newOnes = mapped.where((s) => !previousIds.contains(s.id)).toList();
+    if (newOnes.isEmpty && mapped.length <= previousCount) return;
+    if (newOnes.isEmpty) return;
+
+    // Newest first already — notify about the latest new result (avoid spam).
+    final latest = newOnes.first;
+    final examShort = latest.examTitle.length > 28
+        ? '${latest.examTitle.substring(0, 28)}…'
+        : latest.examTitle;
+    final body =
+        '$examShort · Net ${latest.netWpm.toStringAsFixed(1)} WPM';
+    try {
+      await NotificationService.instance.showNewResult(
+        title: newOnes.length == 1
+            ? 'New typing result'
+            : '${newOnes.length} new typing results',
+        body: body,
+      );
+    } catch (_) {}
+  }
+
+  // ─── Auto-sync every 30s while foreground ───────────────────────────────
+
+  void startAutoSync() {
+    _syncTimer?.cancel();
+    _syncTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(_autoSyncTick());
+    });
+  }
+
+  void stopAutoSync() {
+    _syncTimer?.cancel();
+    _syncTimer = null;
+  }
+
+  void onAppLifecycle(AppLifecycleState state) {
+    _foreground = state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_autoSyncTick());
+    }
+  }
+
+  Future<void> _autoSyncTick() async {
+    if (!_foreground || !arApi.isLoggedIn || _autoSyncRunning || arSyncing) {
+      return;
+    }
+    _autoSyncRunning = true;
+    try {
+      await syncArHistory(notifyOnNew: true, quiet: true);
+    } finally {
+      _autoSyncRunning = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    stopAutoSync();
+    super.dispose();
   }
 
   String? _pickName(Map<String, dynamic>? p) {
@@ -227,6 +639,68 @@ class AppStore extends ChangeNotifier {
     return null;
   }
 
+  // ─── Member stats helpers for Summary cards ─────────────────────────────
+
+  int? get remoteTotalTests {
+    final s = arMemberStats;
+    if (s == null) return null;
+    for (final k in [
+      'total_tests',
+      'total_passages',
+      'total_typed_passages',
+      'count',
+      'tests_count',
+    ]) {
+      final v = s[k];
+      if (v is num) return v.toInt();
+    }
+    return null;
+  }
+
+  double? get remoteAvgGross {
+    final s = arMemberStats;
+    if (s == null) return null;
+    for (final k in [
+      'avg_gross_speed',
+      'average_gross_speed',
+      'avg_gross',
+      'gross_speed_avg',
+    ]) {
+      final v = s[k];
+      if (v is num) return v.toDouble();
+    }
+    return null;
+  }
+
+  double? get remoteAvgNet {
+    final s = arMemberStats;
+    if (s == null) return null;
+    for (final k in [
+      'avg_net_speed',
+      'average_net_speed',
+      'avg_net',
+      'net_speed_avg',
+    ]) {
+      final v = s[k];
+      if (v is num) return v.toDouble();
+    }
+    return null;
+  }
+
+  double? get remoteAvgAccuracy {
+    final s = arMemberStats;
+    if (s == null) return null;
+    for (final k in [
+      'avg_accuracy',
+      'average_accuracy',
+      'accuracy_avg',
+    ]) {
+      final v = s[k];
+      if (v is num) return v.toDouble();
+    }
+    return null;
+  }
+
   // ─── Aggregates ─────────────────────────────────────────────────────────
 
   List<TypingSession> get today {
@@ -242,7 +716,8 @@ class AppStore extends ChangeNotifier {
   int get streak {
     if (sessions.isEmpty) return 0;
     final days = sessions
-        .map((s) => DateTime(s.startedAt.year, s.startedAt.month, s.startedAt.day))
+        .map((s) =>
+            DateTime(s.startedAt.year, s.startedAt.month, s.startedAt.day))
         .toSet()
         .toList()
       ..sort((a, b) => b.compareTo(a));
@@ -290,12 +765,11 @@ class AppStore extends ChangeNotifier {
   int get todayMinutes =>
       today.fold<int>(0, (p, s) => p + (s.durationSec / 60).ceil());
 
-
   List<double> lastNNetWpm(int days) {
     final now = DateTime.now();
     return List.generate(days, (i) {
-      final day =
-          DateTime(now.year, now.month, now.day).subtract(Duration(days: days - 1 - i));
+      final day = DateTime(now.year, now.month, now.day)
+          .subtract(Duration(days: days - 1 - i));
       final daySessions = sessions.where((s) =>
           s.startedAt.year == day.year &&
           s.startedAt.month == day.month &&
@@ -308,12 +782,14 @@ class AppStore extends ChangeNotifier {
   List<double> lastNAccuracy(int days) {
     final now = DateTime.now();
     return List.generate(days, (i) {
-      final day =
-          DateTime(now.year, now.month, now.day).subtract(Duration(days: days - 1 - i));
-      final daySessions = sessions.where((s) =>
-          s.startedAt.year == day.year &&
-          s.startedAt.month == day.month &&
-          s.startedAt.day == day.day).toList();
+      final day = DateTime(now.year, now.month, now.day)
+          .subtract(Duration(days: days - 1 - i));
+      final daySessions = sessions
+          .where((s) =>
+              s.startedAt.year == day.year &&
+              s.startedAt.month == day.month &&
+              s.startedAt.day == day.day)
+          .toList();
       if (daySessions.isEmpty) return 0;
       return daySessions.map((s) => s.accuracy).reduce((a, b) => a + b) /
           daySessions.length;
@@ -321,25 +797,14 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> toggleDarkMode() async {
-    profile = profile.copyWith(darkMode: !profile.darkMode);
-    AppColors.dark = profile.darkMode;
-    await _persist();
+    darkMode = !darkMode;
+    profile = profile.copyWith(darkMode: darkMode);
+    AppColors.dark = darkMode;
+    await _persistActive();
     notifyListeners();
   }
 
-  List<double> last7NetWpm() {
-    final now = DateTime.now();
-    return List.generate(7, (i) {
-      final day =
-          DateTime(now.year, now.month, now.day).subtract(Duration(days: 6 - i));
-      final daySessions = sessions.where((s) =>
-          s.startedAt.year == day.year &&
-          s.startedAt.month == day.month &&
-          s.startedAt.day == day.day);
-      if (daySessions.isEmpty) return 0;
-      return daySessions.map((s) => s.netWpm).reduce(max);
-    });
-  }
+  List<double> last7NetWpm() => lastNNetWpm(7);
 
   List<LeaderboardEntry> weeklyBoard() {
     final weekAgo = DateTime.now().subtract(const Duration(days: 7));

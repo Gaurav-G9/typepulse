@@ -44,7 +44,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         backgroundColor: AppColors.navBar,
         border: null,
         trailing: ThemeToggleButton(
-          isDark: store.profile.darkMode,
+          isDark: store.darkMode,
           onToggle: () => store.toggleDarkMode(),
         ),
       ),

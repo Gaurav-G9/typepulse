@@ -20,31 +20,41 @@ class TypePulseApp extends StatefulWidget {
   State<TypePulseApp> createState() => _TypePulseAppState();
 }
 
-class _TypePulseAppState extends State<TypePulseApp> {
+class _TypePulseAppState extends State<TypePulseApp>
+    with WidgetsBindingObserver {
   final store = AppStore();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     store.load().then((_) {
       if (mounted) setState(() {});
     });
     store.addListener(_onStore);
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    store.onAppLifecycle(state);
+  }
+
   void _onStore() {
-    AppColors.dark = store.profile.darkMode;
+    AppColors.dark = store.darkMode;
     SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
       statusBarColor: const Color(0x00000000),
-      statusBarIconBrightness: AppColors.dark ? Brightness.light : Brightness.dark,
+      statusBarIconBrightness:
+          store.darkMode ? Brightness.light : Brightness.dark,
       systemNavigationBarColor: AppColors.canvas,
-      systemNavigationBarIconBrightness: AppColors.dark ? Brightness.light : Brightness.dark,
+      systemNavigationBarIconBrightness:
+          store.darkMode ? Brightness.light : Brightness.dark,
     ));
     if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     store.removeListener(_onStore);
     store.dispose();
     super.dispose();
@@ -52,7 +62,7 @@ class _TypePulseAppState extends State<TypePulseApp> {
 
   @override
   Widget build(BuildContext context) {
-    AppColors.dark = store.profile.darkMode;
+    AppColors.dark = store.darkMode;
     return CupertinoApp(
       title: 'TypePulse',
       debugShowCheckedModeBanner: false,
@@ -104,18 +114,22 @@ class RootTabs extends StatelessWidget {
       tabBuilder: (context, index) {
         switch (index) {
           case 1:
-            return CupertinoTabView(builder: (_) => LiveLobbyScreen(store: store));
+            return CupertinoTabView(
+                builder: (_) => LiveLobbyScreen(store: store));
           case 2:
-            return CupertinoTabView(builder: (_) => LeaderboardScreen(store: store));
+            return CupertinoTabView(
+                builder: (_) => LeaderboardScreen(store: store));
           case 3:
-            return CupertinoTabView(builder: (_) => ProfileScreen(store: store));
+            return CupertinoTabView(
+                builder: (_) => ProfileScreen(store: store));
           default:
             return CupertinoTabView(
               builder: (_) => HomeScreen(
                 store: store,
                 onOpenLive: () {
                   Navigator.of(_).push(
-                    CupertinoPageRoute(builder: (ctx) => LiveLobbyScreen(store: store)),
+                    CupertinoPageRoute(
+                        builder: (ctx) => LiveLobbyScreen(store: store)),
                   );
                 },
               ),

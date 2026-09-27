@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 
 import '../data/store.dart';
+import '../screens/account_switcher.dart';
 import '../screens/ar_login_sheet.dart';
 import '../theme/app_colors.dart';
 import '../widgets/ios_card.dart';
@@ -19,9 +20,23 @@ class ProfileScreen extends StatelessWidget {
           largeTitle: const Text('You'),
           border: null,
           backgroundColor: AppColors.canvas,
-          trailing: ThemeToggleButton(
-            isDark: p.darkMode,
-            onToggle: () => store.toggleDarkMode(),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CupertinoButton(
+                padding: EdgeInsets.zero,
+                onPressed: () => showAccountSwitcher(context, store),
+                child: Icon(
+                  CupertinoIcons.person_2_fill,
+                  color: AppColors.indigo,
+                  size: 22,
+                ),
+              ),
+              ThemeToggleButton(
+                isDark: store.darkMode,
+                onToggle: () => store.toggleDarkMode(),
+              ),
+            ],
           ),
         ),
         SliverPadding(
@@ -32,12 +47,19 @@ class ProfileScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(p.name, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.label)),
+                    Text(p.name,
+                        style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.label)),
                     const SizedBox(height: 2),
-                    Text(p.handle, style: TextStyle(color: AppColors.secondaryLabel)),
-                    if (store.arApi.email != null) ...[
+                    Text(p.handle,
+                        style: TextStyle(color: AppColors.secondaryLabel)),
+                    if (store.activeAccount != null) ...[
                       const SizedBox(height: 6),
-                      Text(store.arApi.email!, style: TextStyle(fontSize: 13, color: AppColors.blue)),
+                      Text(store.activeAccount!.email,
+                          style: TextStyle(
+                              fontSize: 13, color: AppColors.blue)),
                     ],
                   ],
                 ),
@@ -45,13 +67,65 @@ class ProfileScreen extends StatelessWidget {
               const SizedBox(height: 12),
               IosCard(
                 child: Row(children: [
-                  StatTile(label: 'Best', value: store.bestNetWpm.toStringAsFixed(0), suffix: 'wpm'),
-                  StatTile(label: 'Sessions', value: '${store.sessions.length}', accent: AppColors.blue),
-                  StatTile(label: 'Streak', value: '${store.streak}', accent: AppColors.orange),
+                  StatTile(
+                      label: 'Best',
+                      value: store.bestNetWpm.toStringAsFixed(0),
+                      suffix: 'wpm'),
+                  StatTile(
+                      label: 'Sessions',
+                      value: '${store.sessions.length}',
+                      accent: AppColors.blue),
+                  StatTile(
+                      label: 'Streak',
+                      value: '${store.streak}',
+                      accent: AppColors.orange),
                 ]),
               ),
               const SizedBox(height: 16),
-              Text('AR Typing', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.secondaryLabel)),
+              Text('Accounts',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.secondaryLabel)),
+              const SizedBox(height: 8),
+              IosCard(
+                onTap: () => showAccountSwitcher(context, store),
+                child: Row(children: [
+                  Icon(CupertinoIcons.person_2,
+                      color: AppColors.indigo, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          store.accounts.isEmpty
+                              ? 'No AR accounts'
+                              : '${store.accounts.length} account${store.accounts.length == 1 ? '' : 's'}',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.label),
+                        ),
+                        Text(
+                          store.activeAccount != null
+                              ? 'Active: ${store.activeAccount!.displayName}'
+                              : 'Add an AR Typing login',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.secondaryLabel),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(CupertinoIcons.chevron_right,
+                      size: 16, color: AppColors.tertiaryLabel),
+                ]),
+              ),
+              const SizedBox(height: 16),
+              Text('AR Typing',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.secondaryLabel)),
               const SizedBox(height: 8),
               IosCard(
                 child: Column(
@@ -59,59 +133,83 @@ class ProfileScreen extends StatelessWidget {
                   children: [
                     Row(children: [
                       Icon(
-                        store.arConnected ? CupertinoIcons.checkmark_seal_fill : CupertinoIcons.cloud,
-                        color: store.arConnected ? AppColors.green : AppColors.secondaryLabel,
+                        store.arConnected
+                            ? CupertinoIcons.checkmark_seal_fill
+                            : CupertinoIcons.cloud,
+                        color: store.arConnected
+                            ? AppColors.green
+                            : AppColors.secondaryLabel,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
                           store.arConnected ? 'Connected' : 'Not connected',
-                          style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.label),
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.label),
                         ),
                       ),
                       if (store.arSyncing) const CupertinoActivityIndicator(),
                     ]),
                     if (store.arStatusMessage != null) ...[
                       const SizedBox(height: 8),
-                      Text(store.arStatusMessage!, style: TextStyle(fontSize: 12, color: AppColors.secondaryLabel)),
+                      Text(store.arStatusMessage!,
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.secondaryLabel)),
                     ],
                     if (store.arError != null) ...[
                       const SizedBox(height: 8),
-                      Text(store.arError!, style: TextStyle(fontSize: 12, color: AppColors.red)),
+                      Text(store.arError!,
+                          style:
+                              TextStyle(fontSize: 12, color: AppColors.red)),
                     ],
                     const SizedBox(height: 12),
                     if (!store.arConnected)
                       SizedBox(
                         width: double.infinity,
                         child: CupertinoButton.filled(
-                          onPressed: store.arSyncing ? null : () => showArLoginSheet(context, store),
-                          child: const Text('Sign in to AR Typing'),
+                          onPressed: store.arSyncing
+                              ? null
+                              : () => showArLoginSheet(context, store),
+                          child: Text(store.accounts.isEmpty
+                              ? 'Sign in to AR Typing'
+                              : 'Re-authenticate / Add account'),
                         ),
                       )
                     else ...[
                       Row(children: [
                         Expanded(
                           child: CupertinoButton.filled(
-                            onPressed: store.arSyncing ? null : () => store.syncArHistory(),
+                            onPressed: store.arSyncing
+                                ? null
+                                : () => store.syncArHistory(),
                             child: const Text('Sync History'),
                           ),
                         ),
                         const SizedBox(width: 8),
                         CupertinoButton(
-                          onPressed: store.arSyncing ? null : () => store.arLogout(),
-                          child: Text('Logout', style: TextStyle(color: AppColors.red)),
+                          onPressed: store.arSyncing
+                              ? null
+                              : () => store.arLogout(),
+                          child: Text('Logout',
+                              style: TextStyle(color: AppColors.red)),
                         ),
                       ]),
                       Text(
                         '${store.arSessionCount} AR workouts on device',
-                        style: TextStyle(fontSize: 12, color: AppColors.secondaryLabel),
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.secondaryLabel),
                       ),
                     ],
                   ],
                 ),
               ),
               const SizedBox(height: 16),
-              Text('Goals', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.secondaryLabel)),
+              Text('Goals',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.secondaryLabel)),
               const SizedBox(height: 8),
               IosCard(
                 onTap: () => _editInt(
@@ -120,13 +218,16 @@ class ProfileScreen extends StatelessWidget {
                   value: p.dailyGoalMinutes,
                   min: 5,
                   max: 120,
-                  onSave: (v) => store.updateProfile(p.copyWith(dailyGoalMinutes: v)),
+                  onSave: (v) =>
+                      store.updateProfile(p.copyWith(dailyGoalMinutes: v)),
                 ),
                 child: Row(children: [
                   Text('Daily goal', style: TextStyle(color: AppColors.label)),
                   const Spacer(),
-                  Text('${p.dailyGoalMinutes} min', style: TextStyle(color: AppColors.secondaryLabel)),
-                  Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.tertiaryLabel),
+                  Text('${p.dailyGoalMinutes} min',
+                      style: TextStyle(color: AppColors.secondaryLabel)),
+                  Icon(CupertinoIcons.chevron_right,
+                      size: 16, color: AppColors.tertiaryLabel),
                 ]),
               ),
               const SizedBox(height: 8),
@@ -137,19 +238,23 @@ class ProfileScreen extends StatelessWidget {
                   value: p.targetWpm,
                   min: 15,
                   max: 80,
-                  onSave: (v) => store.updateProfile(p.copyWith(targetWpm: v)),
+                  onSave: (v) =>
+                      store.updateProfile(p.copyWith(targetWpm: v)),
                 ),
                 child: Row(children: [
                   Text('Target WPM', style: TextStyle(color: AppColors.label)),
                   const Spacer(),
-                  Text('${p.targetWpm}', style: TextStyle(color: AppColors.secondaryLabel)),
-                  Icon(CupertinoIcons.chevron_right, size: 16, color: AppColors.tertiaryLabel),
+                  Text('${p.targetWpm}',
+                      style: TextStyle(color: AppColors.secondaryLabel)),
+                  Icon(CupertinoIcons.chevron_right,
+                      size: 16, color: AppColors.tertiaryLabel),
                 ]),
               ),
               const SizedBox(height: 8),
               IosCard(
                 onTap: () => store.updateProfile(
-                  p.copyWith(languagePref: p.languagePref == 'hi' ? 'en' : 'hi'),
+                  p.copyWith(
+                      languagePref: p.languagePref == 'hi' ? 'en' : 'hi'),
                 ),
                 child: Text(
                   'Practice language: ${p.languagePref == 'hi' ? 'Hindi' : 'English'}',
@@ -158,9 +263,10 @@ class ProfileScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               Text(
-                'Offline tracker · UPSSSC keystroke/5 scoring · AR Typing sync',
+                'Multi-account · auto-sync 30s · local notifications · UPSSSC scoring',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11, color: AppColors.secondaryLabel),
+                style:
+                    TextStyle(fontSize: 11, color: AppColors.secondaryLabel),
               ),
             ]),
           ),
@@ -185,7 +291,9 @@ class ProfileScreen extends StatelessWidget {
         color: AppColors.card,
         child: Column(children: [
           Row(children: [
-            CupertinoButton(child: const Text('Cancel'), onPressed: () => Navigator.pop(ctx)),
+            CupertinoButton(
+                child: const Text('Cancel'),
+                onPressed: () => Navigator.pop(ctx)),
             const Spacer(),
             CupertinoButton(
               child: const Text('Save'),
@@ -195,15 +303,20 @@ class ProfileScreen extends StatelessWidget {
               },
             ),
           ]),
-          Text(title, style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.label)),
+          Text(title,
+              style:
+                  TextStyle(fontWeight: FontWeight.w600, color: AppColors.label)),
           Expanded(
             child: CupertinoPicker(
               itemExtent: 36,
-              scrollController: FixedExtentScrollController(initialItem: value - min),
+              scrollController:
+                  FixedExtentScrollController(initialItem: value - min),
               onSelectedItemChanged: (i) => current = min + i,
               children: [
                 for (var i = min; i <= max; i++)
-                  Center(child: Text('$i', style: TextStyle(color: AppColors.label))),
+                  Center(
+                      child:
+                          Text('$i', style: TextStyle(color: AppColors.label))),
               ],
             ),
           ),

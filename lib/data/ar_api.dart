@@ -14,18 +14,22 @@ import '../models/session.dart';
 /// - GET  /learning/typedPassages/?page=&page_size=
 /// - GET  /learning/memberTypingStats/
 /// - GET  /learning/students/profile/
+///
+/// Tokens are stored per [accountId] so multiple AR logins can coexist on one device.
 class ArTypingApi {
   static const baseUrl =
       'https://artypingplatform-efb5438ddb1b.herokuapp.com/api/v1';
   static const siteUrl = 'https://www.artypingplatform.com';
 
-  static const _kAccess = 'ar_access_token';
-  static const _kRefresh = 'ar_refresh_token';
-  static const _kEmail = 'ar_email';
+  // Legacy single-account keys (migrated on first load).
+  static const _kLegacyAccess = 'ar_access_token';
+  static const _kLegacyRefresh = 'ar_refresh_token';
+  static const _kLegacyEmail = 'ar_email';
 
   final FlutterSecureStorage _secure;
   final http.Client _http;
 
+  String? accountId;
   String? accessToken;
   String? refreshToken;
   String? email;
@@ -42,37 +46,75 @@ class ArTypingApi {
   bool get isLoggedIn =>
       accessToken != null && accessToken!.isNotEmpty;
 
-  Future<void> loadStoredSession() async {
-    accessToken = await _secure.read(key: _kAccess);
-    refreshToken = await _secure.read(key: _kRefresh);
-    email = await _secure.read(key: _kEmail);
+  String _accessKey(String id) => 'ar_access_$id';
+  String _refreshKey(String id) => 'ar_refresh_$id';
+
+  Future<void> loadAccount(String id, {String? emailHint}) async {
+    accountId = id;
+    accessToken = await _secure.read(key: _accessKey(id));
+    refreshToken = await _secure.read(key: _refreshKey(id));
+    email = emailHint;
+  }
+
+  /// Migrate pre-multi-account tokens into the given [accountId].
+  Future<bool> migrateLegacyTokens(String accountId, String email) async {
+    final access = await _secure.read(key: _kLegacyAccess);
+    final refresh = await _secure.read(key: _kLegacyRefresh);
+    if (access == null || access.isEmpty) return false;
+    this.accountId = accountId;
+    this.email = email;
+    accessToken = access;
+    refreshToken = refresh;
+    await _persist();
+    await _secure.delete(key: _kLegacyAccess);
+    await _secure.delete(key: _kLegacyRefresh);
+    await _secure.delete(key: _kLegacyEmail);
+    return true;
+  }
+
+  Future<Map<String, String?>> readLegacyTokens() async {
+    return {
+      'access': await _secure.read(key: _kLegacyAccess),
+      'refresh': await _secure.read(key: _kLegacyRefresh),
+      'email': await _secure.read(key: _kLegacyEmail),
+    };
   }
 
   Future<void> _persist() async {
+    final id = accountId;
+    if (id == null) return;
     if (accessToken != null) {
-      await _secure.write(key: _kAccess, value: accessToken!);
+      await _secure.write(key: _accessKey(id), value: accessToken!);
     } else {
-      await _secure.delete(key: _kAccess);
+      await _secure.delete(key: _accessKey(id));
     }
     if (refreshToken != null) {
-      await _secure.write(key: _kRefresh, value: refreshToken!);
+      await _secure.write(key: _refreshKey(id), value: refreshToken!);
     } else {
-      await _secure.delete(key: _kRefresh);
-    }
-    if (email != null) {
-      await _secure.write(key: _kEmail, value: email!);
-    } else {
-      await _secure.delete(key: _kEmail);
+      await _secure.delete(key: _refreshKey(id));
     }
   }
 
   Future<void> clearSession() async {
+    final id = accountId;
     accessToken = null;
     refreshToken = null;
-    email = null;
-    await _secure.delete(key: _kAccess);
-    await _secure.delete(key: _kRefresh);
-    await _secure.delete(key: _kEmail);
+    if (id != null) {
+      await _secure.delete(key: _accessKey(id));
+      await _secure.delete(key: _refreshKey(id));
+    }
+  }
+
+  /// Delete tokens for an account that is not currently loaded.
+  Future<void> deleteTokensFor(String id) async {
+    await _secure.delete(key: _accessKey(id));
+    await _secure.delete(key: _refreshKey(id));
+    if (accountId == id) {
+      accessToken = null;
+      refreshToken = null;
+      email = null;
+      accountId = null;
+    }
   }
 
   Map<String, String> get _authHeaders => {
@@ -84,6 +126,7 @@ class ArTypingApi {
   Future<Map<String, dynamic>> login({
     required String email,
     required String password,
+    required String accountId,
   }) async {
     final res = await _http.post(
       Uri.parse('$baseUrl/jwt/create/'),
@@ -96,6 +139,7 @@ class ArTypingApi {
 
     if (res.statusCode == 200 || res.statusCode == 201) {
       final body = jsonDecode(res.body) as Map<String, dynamic>;
+      this.accountId = accountId;
       accessToken = body['access'] as String?;
       refreshToken = body['refresh'] as String?;
       this.email = email.trim();
@@ -132,6 +176,8 @@ class ArTypingApi {
       await _persist();
       return accessToken != null;
     }
+    // Refresh rejected — clear tokens so UI can re-auth.
+    await clearSession();
     return false;
   }
 
@@ -156,6 +202,12 @@ class ArTypingApi {
       final ok = await refreshAccessToken();
       if (ok) {
         res = await _http.get(uri, headers: _authHeaders);
+      } else {
+        throw ArApiException(
+          'Session expired. Sign in again.',
+          statusCode: 401,
+          needsReauth: true,
+        );
       }
     }
     return res;
@@ -164,7 +216,7 @@ class ArTypingApi {
   /// Paginated typing history from member area.
   Future<ArHistoryPage> fetchTypingHistory({
     int page = 1,
-    int pageSize = 50,
+    int pageSize = 100,
   }) async {
     if (!isLoggedIn) throw ArApiException('Not logged in', statusCode: 401);
     final uri = Uri.parse('$baseUrl/learning/typedPassages/').replace(
@@ -203,16 +255,44 @@ class ArTypingApi {
     );
   }
 
+  /// Walk `next` until exhausted or [maxPages] (page_size up to 100).
   Future<List<Map<String, dynamic>>> fetchAllHistory({
-    int maxPages = 10,
-    int pageSize = 50,
+    int maxPages = 15,
+    int pageSize = 100,
   }) async {
     final all = <Map<String, dynamic>>[];
     var page = 1;
+    String? nextUrl;
     while (page <= maxPages) {
-      final batch = await fetchTypingHistory(page: page, pageSize: pageSize);
+      final ArHistoryPage batch;
+      if (nextUrl != null) {
+        final res = await _authedGet(Uri.parse(nextUrl));
+        if (res.statusCode != 200) {
+          throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
+        }
+        final body = jsonDecode(res.body);
+        if (body is List) {
+          batch = ArHistoryPage(
+            results: body.cast<Map<String, dynamic>>(),
+            count: body.length,
+            next: null,
+          );
+        } else {
+          final map = body as Map<String, dynamic>;
+          batch = ArHistoryPage(
+            results: (map['results'] as List<dynamic>? ?? [])
+                .map((e) => e as Map<String, dynamic>)
+                .toList(),
+            count: map['count'] as int? ?? 0,
+            next: map['next'] as String?,
+          );
+        }
+      } else {
+        batch = await fetchTypingHistory(page: page, pageSize: pageSize);
+      }
       all.addAll(batch.results);
       if (batch.next == null || batch.results.isEmpty) break;
+      nextUrl = batch.next;
       page++;
     }
     return all;
@@ -316,7 +396,6 @@ class ArTypingApi {
     final expected = e['passage_text'] as String?;
     final typed = e['typed_passage_text'] as String?;
 
-    // Approximate accuracy from correct chars if not provided.
     final accuracy = (e['accuracy'] as num?)?.toDouble() ??
         (keyTyped == 0
             ? 0.0
@@ -335,7 +414,8 @@ class ArTypingApi {
       keystrokesGiven: keyGiven,
       typedChars: keyTyped,
       correctChars: (keyTyped * (accuracy / 100)).round().clamp(0, keyTyped),
-      errors: (keyTyped - (keyTyped * (accuracy / 100)).round()).clamp(0, keyTyped),
+      errors:
+          (keyTyped - (keyTyped * (accuracy / 100)).round()).clamp(0, keyTyped),
       wordsTyped: wordsTyped,
       fullMistakes: full,
       halfMistakes: half,
@@ -357,7 +437,9 @@ class ArTypingApi {
 
   static String _guessLang(String exam, dynamic languageId) {
     final lower = exam.toLowerCase();
-    if (lower.contains('hindi') || lower.contains('mangal') || lower.contains('krutidev')) {
+    if (lower.contains('hindi') ||
+        lower.contains('mangal') ||
+        lower.contains('krutidev')) {
       return 'hi';
     }
     if (languageId == 2 || languageId == '2') return 'hi';
@@ -407,7 +489,13 @@ class ArApiException implements Exception {
   final String message;
   final int? statusCode;
   final bool freeMode;
-  ArApiException(this.message, {this.statusCode, this.freeMode = false});
+  final bool needsReauth;
+  ArApiException(
+    this.message, {
+    this.statusCode,
+    this.freeMode = false,
+    this.needsReauth = false,
+  });
   @override
   String toString() => message;
 }

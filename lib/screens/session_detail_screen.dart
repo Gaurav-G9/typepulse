@@ -126,11 +126,39 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 ),
               ),
             ),
-            if ((s.expectedText?.isNotEmpty ?? false) && (s.typedText?.isNotEmpty ?? false)) ...[
-              const SizedBox(height: 20),
-              Text('Detailed Comparison', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.label)),
-              const SizedBox(height: 8),
-              ..._wordDiff(s.expectedText!, s.typedText!),
+            const SizedBox(height: 20),
+            Text('Detailed Comparison', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.label)),
+            const SizedBox(height: 8),
+            if ((s.expectedText?.isNotEmpty ?? false) && (s.typedText?.isNotEmpty ?? false))
+              ..._wordDiff(s.expectedText!, s.typedText!)
+            else ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: AppColors.groupedBackground,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(
+                  children: [
+                    Icon(CupertinoIcons.doc_text_search, size: 36, color: AppColors.tertiaryLabel),
+                    const SizedBox(height: 10),
+                    Text(
+                      isAr ? 'Passage text not included in sync' : 'No passage text for this session',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.label),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      isAr
+                          ? 'AR Typing sometimes omits full passage bodies. Scores above still reflect the synced result.'
+                          : 'Complete a practice or live test to see word-by-word comparison here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: AppColors.secondaryLabel, height: 1.35),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ],
         ),

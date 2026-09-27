@@ -36,7 +36,7 @@ class NetSparkline extends StatelessWidget {
                   if (v > 0)
                     Text(
                       v.toStringAsFixed(0),
-                      style: const TextStyle(fontSize: 9, color: AppColors.secondaryLabel),
+                      style: TextStyle(fontSize: 9, color: AppColors.secondaryLabel),
                     ),
                   const SizedBox(height: 4),
                   Container(
@@ -54,7 +54,7 @@ class NetSparkline extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  Text(labels[i], style: const TextStyle(fontSize: 11, color: AppColors.secondaryLabel)),
+                  Text(labels[i], style: TextStyle(fontSize: 11, color: AppColors.secondaryLabel)),
                 ],
               ),
             ),

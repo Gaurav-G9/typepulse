@@ -87,7 +87,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     final taken = (duration - max(remaining, 0)).clamp(1, duration);
     final session = AppStore.buildSession(
       allottedSec: duration,
-      timeTakenSec: taken,
+      timeTakenSec: taken.toInt(),
       language: widget.passage.language,
       mode: 'live',
       examTitle: widget.roomName,

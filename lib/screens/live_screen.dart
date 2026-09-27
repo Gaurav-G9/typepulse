@@ -25,7 +25,7 @@ class LiveLobbyScreen extends StatelessWidget {
           border: null,
           backgroundColor: AppColors.canvas,
           trailing: ThemeToggleButton(
-            isDark: store.profile.darkMode,
+            isDark: store.darkMode,
             onToggle: () => store.toggleDarkMode(),
           ),
         ),
