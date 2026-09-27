@@ -205,6 +205,49 @@ class ProfileScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
+              Text('Background sync',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.secondaryLabel)),
+              const SizedBox(height: 8),
+              IosCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Keep syncing in background',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.label)),
+                            const SizedBox(height: 4),
+                            Text(
+                              store.backgroundSyncEnabled
+                                  ? 'Foreground service on — ~30s polls with “TypePulse is syncing” notification. Workmanager also runs ~every 15 min (Android OS minimum).'
+                                  : 'Off: foreground 30s timer only + Workmanager ~15 min when signed in. Turn on for continuous background/kill-resistant sync.',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.secondaryLabel),
+                            ),
+                          ],
+                        ),
+                      ),
+                      CupertinoSwitch(
+                        value: store.backgroundSyncEnabled,
+                        activeTrackColor: AppColors.indigo,
+                        onChanged: store.arConnected
+                            ? (v) => store.setBackgroundSyncEnabled(v)
+                            : null,
+                      ),
+                    ]),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
               Text('Goals',
                   style: TextStyle(
                       fontSize: 13,
@@ -263,7 +306,7 @@ class ProfileScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               Text(
-                'Multi-account · auto-sync 30s · local notifications · UPSSSC scoring',
+                'Multi-account · FG 30s · Workmanager ~15m · optional FGS · notifications',
                 textAlign: TextAlign.center,
                 style:
                     TextStyle(fontSize: 11, color: AppColors.secondaryLabel),

@@ -6,10 +6,16 @@ import 'screens/home_screen.dart';
 import 'screens/leaderboard_screen.dart';
 import 'screens/live_screen.dart';
 import 'screens/profile_screen.dart';
+import 'services/background_bootstrap.dart';
 import 'theme/app_colors.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await BackgroundBootstrap.init();
+  } catch (_) {
+    // Background plugins may fail on unsupported platforms; UI still works.
+  }
   runApp(const TypePulseApp());
 }
 

@@ -10,6 +10,8 @@ import '../models/ar_account.dart';
 import '../models/leaderboard_entry.dart';
 import '../models/session.dart';
 import '../models/user_profile.dart';
+import '../services/background_bootstrap.dart';
+import '../services/background_sync.dart';
 import '../services/notification_service.dart';
 import '../theme/app_colors.dart';
 import 'ar_api.dart';
@@ -43,6 +45,7 @@ class AppStore extends ChangeNotifier {
   Timer? _syncTimer;
   bool _foreground = true;
   bool _autoSyncRunning = false;
+  bool backgroundSyncEnabled = false;
 
   ArAccount? get activeAccount {
     if (activeAccountId == null) return null;
@@ -63,6 +66,7 @@ class AppStore extends ChangeNotifier {
 
     darkMode = prefs.getBool(_kDarkMode) ?? false;
     AppColors.dark = darkMode;
+    backgroundSyncEnabled = prefs.getBool(BackgroundSync.kBackgroundSync) ?? false;
 
     await _loadAccounts(prefs);
     await _migrateLegacyIfNeeded(prefs);
@@ -106,9 +110,14 @@ class AppStore extends ChangeNotifier {
     } catch (_) {}
 
     startAutoSync();
+    unawaited(BackgroundSync.setAppForeground(true));
     if (arApi.isLoggedIn) {
       // Initial quiet pull so Summary is fresh after cold start.
       unawaited(syncArHistory(notifyOnNew: false, quiet: true));
+      unawaited(BackgroundBootstrap.schedulePeriodicSync());
+      if (backgroundSyncEnabled) {
+        unawaited(BackgroundBootstrap.startContinuousSync());
+      }
     }
   }
 
@@ -329,6 +338,10 @@ class AppStore extends ChangeNotifier {
       arStatusMessage = 'Signed in — syncing history…';
       notifyListeners();
       await syncArHistory(notifyOnNew: false);
+      unawaited(BackgroundBootstrap.schedulePeriodicSync());
+      if (backgroundSyncEnabled) {
+        unawaited(BackgroundBootstrap.startContinuousSync());
+      }
       return true;
     } on ArApiException catch (e) {
       arError = e.message;
@@ -396,6 +409,8 @@ class AppStore extends ChangeNotifier {
         );
         sessions = seedHistory();
         profile = profile.copyWith(seededFromArHistory: true);
+        unawaited(BackgroundBootstrap.stopContinuousSync());
+        unawaited(BackgroundBootstrap.cancelPeriodicSync());
       }
     }
 
@@ -594,10 +609,68 @@ class AppStore extends ChangeNotifier {
   }
 
   void onAppLifecycle(AppLifecycleState state) {
+    final wasForeground = _foreground;
     _foreground = state == AppLifecycleState.resumed ||
         state == AppLifecycleState.inactive;
+    unawaited(BackgroundSync.setAppForeground(_foreground));
+
     if (state == AppLifecycleState.resumed) {
+      unawaited(_reloadActiveFromPrefs());
       unawaited(_autoSyncTick());
+    } else if (wasForeground &&
+        (state == AppLifecycleState.paused ||
+            state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.detached)) {
+      // Continuous ~30s while backgrounded only if Profile toggle is on.
+      if (backgroundSyncEnabled && arApi.isLoggedIn) {
+        unawaited(BackgroundBootstrap.startContinuousSync());
+      }
+    }
+  }
+
+  /// Pull sessions/stats written by Workmanager / FGS isolates into memory.
+  Future<void> _reloadActiveFromPrefs() async {
+    final id = activeAccountId;
+    if (id == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    final s = prefs.getString(_sessionsKey(id));
+    if (s != null) {
+      try {
+        final list = jsonDecode(s) as List<dynamic>;
+        sessions = list
+            .map((e) => TypingSession.fromJson(e as Map<String, dynamic>))
+            .toList()
+          ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+      } catch (_) {}
+    }
+    final st = prefs.getString(_statsKey(id));
+    if (st != null) {
+      try {
+        arMemberStats = jsonDecode(st) as Map<String, dynamic>;
+      } catch (_) {}
+    }
+    final rp = prefs.getString(_remoteProfileKey(id));
+    if (rp != null) {
+      try {
+        arRemoteProfile = jsonDecode(rp) as Map<String, dynamic>;
+      } catch (_) {}
+    }
+    notifyListeners();
+  }
+
+  /// Profile toggle: FGS + ongoing "TypePulse is syncing" for ~30s background polls.
+  Future<void> setBackgroundSyncEnabled(bool enabled) async {
+    backgroundSyncEnabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(BackgroundSync.kBackgroundSync, enabled);
+    notifyListeners();
+    if (enabled) {
+      if (arApi.isLoggedIn) {
+        await BackgroundBootstrap.schedulePeriodicSync();
+      }
+      await BackgroundBootstrap.setKeepSyncingInBackground(true);
+    } else {
+      await BackgroundBootstrap.setKeepSyncingInBackground(false);
     }
   }
 
