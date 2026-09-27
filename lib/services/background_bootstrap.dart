@@ -41,7 +41,10 @@ class BackgroundBootstrap {
       androidConfiguration: AndroidConfiguration(
         onStart: backgroundServiceOnStart,
         autoStart: false,
-        autoStartOnBoot: true,
+        // Android 14+/15 forbid starting a dataSync FGS from BOOT_COMPLETED
+        // (ForegroundServiceStartNotAllowedException). Workmanager already
+        // survives reboots; the FGS resumes next time the app is opened.
+        autoStartOnBoot: false,
         isForegroundMode: true,
         notificationChannelId: syncChannelId,
         initialNotificationTitle: 'TypePulse is syncing',
@@ -100,21 +103,28 @@ class BackgroundBootstrap {
   static Future<void> startContinuousSync() async {
     if (!Platform.isAndroid) return;
     await BackgroundSync.setBackgroundSyncEnabled(true);
-    final service = FlutterBackgroundService();
-    final running = await service.isRunning();
-    if (!running) {
-      await service.startService();
+    try {
+      final service = FlutterBackgroundService();
+      final running = await service.isRunning();
+      if (!running) {
+        await service.startService();
+      }
+    } catch (_) {
+      // Android 12+ refuses to start a foreground service while the app is in
+      // the background; it will start the next time the app is resumed.
     }
   }
 
   static Future<void> stopContinuousSync() async {
     if (!Platform.isAndroid) return;
     await BackgroundSync.setBackgroundSyncEnabled(false);
-    final service = FlutterBackgroundService();
-    final running = await service.isRunning();
-    if (running) {
-      service.invoke('stop');
-    }
+    try {
+      final service = FlutterBackgroundService();
+      final running = await service.isRunning();
+      if (running) {
+        service.invoke('stop');
+      }
+    } catch (_) {}
   }
 
   /// Apply Profile toggle: enable FGS + keep Workmanager; or stop FGS only.
@@ -183,9 +193,15 @@ void backgroundServiceOnStart(ServiceInstance service) async {
     }
   } catch (_) {}
 
+  var busy = false;
   Timer.periodic(const Duration(seconds: 30), (timer) async {
+    // A slow network round-trip must not stack overlapping syncs.
+    if (busy) return;
+    busy = true;
     try {
       final prefs = await SharedPreferences.getInstance();
+      // This isolate lives for hours; re-read values written by the UI.
+      await prefs.reload();
       final stillWanted = prefs.getBool(BackgroundSync.kBackgroundSync) ?? false;
       if (!stillWanted) {
         timer.cancel();
@@ -203,6 +219,9 @@ void backgroundServiceOnStart(ServiceInstance service) async {
               'Last check ${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}',
         );
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      busy = false;
+    }
   });
 }

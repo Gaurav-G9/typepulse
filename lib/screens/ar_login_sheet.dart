@@ -78,9 +78,9 @@ class _ArLoginSheetState extends State<ArLoginSheet> {
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Connect AR Typing',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppColors.label),
             ),
             const SizedBox(height: 6),
             Text(
@@ -88,12 +88,15 @@ class _ArLoginSheetState extends State<ArLoginSheet> {
               style: TextStyle(fontSize: 13, color: AppColors.secondaryLabel, height: 1.35),
             ),
             const SizedBox(height: 20),
-            const Text('Email', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            Text('Email', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.label)),
             const SizedBox(height: 6),
             CupertinoTextField(
               controller: email,
               keyboardType: TextInputType.emailAddress,
               autocorrect: false,
+              textInputAction: TextInputAction.next,
+              autofillHints: const [AutofillHints.email],
+              style: TextStyle(color: AppColors.label),
               placeholder: 'you@example.com',
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
@@ -102,11 +105,17 @@ class _ArLoginSheetState extends State<ArLoginSheet> {
               ),
             ),
             const SizedBox(height: 14),
-            const Text('Password', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            Text('Password', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.label)),
             const SizedBox(height: 6),
             CupertinoTextField(
               controller: password,
               obscureText: obscure,
+              autocorrect: false,
+              enableSuggestions: false,
+              textInputAction: TextInputAction.done,
+              autofillHints: const [AutofillHints.password],
+              onSubmitted: (_) => busy ? null : _submit(),
+              style: TextStyle(color: AppColors.label),
               placeholder: 'Your AR Typing password',
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(

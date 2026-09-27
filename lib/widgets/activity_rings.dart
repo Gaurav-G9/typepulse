@@ -112,7 +112,7 @@ class DashRow extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.separator.withOpacity(0.6)),
+        border: Border.all(color: AppColors.separator.withValues(alpha: 0.6)),
       ),
       child: Row(
         children: [

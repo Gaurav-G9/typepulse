@@ -39,6 +39,9 @@ class BackgroundSync {
   static Future<int> run({bool notifyOnNew = true}) async {
     await ensurePlugins();
     final prefs = await SharedPreferences.getInstance();
+    // Long-lived isolates (the foreground service) keep a stale in-memory
+    // copy of prefs; re-read so we never overwrite newer UI writes.
+    await prefs.reload();
     final accountId = prefs.getString(kActiveAccountId);
     if (accountId == null || accountId.isEmpty) return 0;
 
@@ -50,16 +53,8 @@ class BackgroundSync {
     await api.loadAccount(accountId);
     if (!api.isLoggedIn) return 0;
 
-    final sessionsRaw = prefs.getString(sessionsKey(accountId));
-    final previous = <TypingSession>[];
-    if (sessionsRaw != null) {
-      try {
-        final list = jsonDecode(sessionsRaw) as List<dynamic>;
-        previous.addAll(list.map(
-            (e) => TypingSession.fromJson(e as Map<String, dynamic>)));
-      } catch (_) {}
-    }
-    final previousIds = previous.map((s) => s.id).toSet();
+    final previousIds =
+        _readSessions(prefs, accountId).map((s) => s.id).toSet();
 
     Map<String, dynamic>? remoteProfile;
     Map<String, dynamic>? memberStats;
@@ -85,7 +80,19 @@ class BackgroundSync {
       return 0;
     }
 
-    final mapped = remote.map(ArTypingApi.sessionFromRemote).toList();
+    final mapped = <TypingSession>[];
+    for (final row in remote) {
+      try {
+        mapped.add(ArTypingApi.sessionFromRemote(row));
+      } catch (_) {}
+    }
+
+    // The network round-trip can take a while: re-read so practice sessions
+    // saved by the UI in the meantime are kept, and bail if the user switched
+    // accounts.
+    await prefs.reload();
+    if (prefs.getString(kActiveAccountId) != accountId) return 0;
+    final previous = _readSessions(prefs, accountId);
     final localOnly = previous
         .where((s) => s.source != 'ar' && !s.id.startsWith('ar-'))
         .where((s) => !s.id.startsWith('seed-') && s.id != 'sample-upsssc')
@@ -106,8 +113,10 @@ class BackgroundSync {
     }
 
     if (notifyOnNew) {
-      final newOnes =
-          mapped.where((s) => !previousIds.contains(s.id)).toList();
+      final newOnes = mapped
+          .where((s) => !previousIds.contains(s.id))
+          .toList()
+        ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
       if (newOnes.isNotEmpty) {
         final latest = newOnes.first;
         final examShort = latest.examTitle.length > 28
@@ -127,8 +136,24 @@ class BackgroundSync {
     return mapped.length;
   }
 
+  static List<TypingSession> _readSessions(
+      SharedPreferences prefs, String accountId) {
+    final raw = prefs.getString(sessionsKey(accountId));
+    if (raw == null) return [];
+    final out = <TypingSession>[];
+    try {
+      for (final e in jsonDecode(raw) as List<dynamic>) {
+        try {
+          out.add(TypingSession.fromJson(e as Map<String, dynamic>));
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return out;
+  }
+
   static Future<bool> isBackgroundSyncEnabled() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     return prefs.getBool(kBackgroundSync) ?? false;
   }
 
@@ -144,6 +169,7 @@ class BackgroundSync {
 
   static Future<bool> isAppForeground() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     return prefs.getBool(kAppForeground) ?? true;
   }
 }

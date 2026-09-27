@@ -34,10 +34,10 @@ class _TypePulseAppState extends State<TypePulseApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    store.load().then((_) {
+    store.addListener(_onStore);
+    store.load().whenComplete(() {
       if (mounted) setState(() {});
     });
-    store.addListener(_onStore);
   }
 
   @override
@@ -118,24 +118,33 @@ class RootTabs extends StatelessWidget {
         ],
       ),
       tabBuilder: (context, index) {
+        // A tab's root page is built once and cached by its Navigator, so it
+        // must listen to the store itself to reflect syncs / theme changes.
+        Widget listen(WidgetBuilder page) => CupertinoTabView(
+              builder: (_) => ListenableBuilder(
+                listenable: store,
+                builder: (ctx, _) => page(ctx),
+              ),
+            );
         switch (index) {
           case 1:
-            return CupertinoTabView(
-                builder: (_) => LiveLobbyScreen(store: store));
+            return listen((_) => LiveLobbyScreen(store: store));
           case 2:
-            return CupertinoTabView(
-                builder: (_) => LeaderboardScreen(store: store));
+            return listen((_) => LeaderboardScreen(store: store));
           case 3:
-            return CupertinoTabView(
-                builder: (_) => ProfileScreen(store: store));
+            return listen((_) => ProfileScreen(store: store));
           default:
-            return CupertinoTabView(
-              builder: (_) => HomeScreen(
+            return listen(
+              (ctx) => HomeScreen(
                 store: store,
                 onOpenLive: () {
-                  Navigator.of(_).push(
+                  Navigator.of(ctx).push(
                     CupertinoPageRoute(
-                        builder: (ctx) => LiveLobbyScreen(store: store)),
+                      builder: (_) => ListenableBuilder(
+                        listenable: store,
+                        builder: (_, __) => LiveLobbyScreen(store: store),
+                      ),
+                    ),
                   );
                 },
               ),

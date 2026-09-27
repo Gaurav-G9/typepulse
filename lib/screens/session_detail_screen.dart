@@ -6,6 +6,7 @@ import '../data/store.dart';
 import '../models/session.dart';
 import '../theme/app_colors.dart';
 import '../widgets/activity_rings.dart';
+import '../widgets/store_rebuild.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   final AppStore store;
@@ -16,7 +17,11 @@ class SessionDetailScreen extends StatefulWidget {
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
 }
 
-class _SessionDetailScreenState extends State<SessionDetailScreen> {
+class _SessionDetailScreenState extends State<SessionDetailScreen>
+    with RebuildOn<SessionDetailScreen> {
+  @override
+  Listenable get rebuildSource => widget.store;
+
   bool speedOnDuration = false;
   bool keystrokeFormula = true;
 
@@ -24,7 +29,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   ScoreBreakdown get breakdown {
     final hasTexts = (s.expectedText?.isNotEmpty ?? false) && (s.typedText?.isNotEmpty ?? false);
-    if (hasTexts) {
+    // AR results keep the site's own mistake counts; only local sessions are re-scored.
+    final isAr = s.source == 'ar' || s.id.startsWith('ar-');
+    if (hasTexts && !isAr) {
       return Scoring.evaluate(
         expected: s.expectedText!,
         typed: s.typedText!,
@@ -67,8 +74,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 36),
           children: [
             if (isAr)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 10),
                 child: Text('Synced from AR Typing', style: TextStyle(fontSize: 12, color: AppColors.blue, fontWeight: FontWeight.w600)),
               ),
             _toggleRow(
@@ -81,9 +88,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             _meta('Exam', s.examTitle),
             _meta('Passage', s.passageTitle),
             _meta('Keystrokes given', '${s.keystrokesGiven}'),
-            _meta('Duration', '${mmss(s.durationSec)}'),
+            _meta('Duration', mmss(s.durationSec)),
             _meta('Date', DateFormat('dd/MM/yyyy').format(s.startedAt)),
-            _meta('Time taken', '${mmss(s.timeTakenSec)}'),
+            _meta('Time taken', mmss(s.timeTakenSec)),
             _toggleRow(
               'Keystroke word formula (/5)',
               keystrokeFormula,
@@ -169,7 +176,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Widget _toggleRow(String label, bool value, Color active, ValueChanged<bool> onChanged) {
     return Row(children: [
       Expanded(child: Text(label, style: TextStyle(fontSize: 13, color: AppColors.secondaryLabel))),
-      CupertinoSwitch(value: value, activeColor: active, onChanged: onChanged),
+      CupertinoSwitch(value: value, activeTrackColor: active, onChanged: onChanged),
     ]);
   }
 
@@ -189,28 +196,47 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   List<Widget> _wordDiff(String expected, String typed) {
-    final exp = expected.trim().isEmpty ? <String>[] : expected.trim().split(RegExp(r'\s+'));
-    final got = typed.trim().isEmpty ? <String>[] : typed.trim().split(RegExp(r'\s+'));
-    final n = exp.length > got.length ? exp.length : got.length;
+    final aligned = Scoring.alignWords(expected, typed);
     final rows = <Widget>[];
-    final limit = n > 80 ? 80 : n;
-    for (var i = 0; i < limit; i++) {
-      final a = i < exp.length ? exp[i] : '—';
-      final b = i < got.length ? got[i] : '—';
-      final ok = a == b;
+    const limit = 120;
+    final shown = aligned.length > limit ? limit : aligned.length;
+    for (var i = 0; i < shown; i++) {
+      final w = aligned[i];
+      final Color color;
+      final String tag;
+      switch (w.mark) {
+        case WordMark.correct:
+          color = AppColors.green;
+          tag = '';
+        case WordMark.pending:
+          color = AppColors.secondaryLabel;
+          tag = ' (unfinished)';
+        case WordMark.half:
+          color = AppColors.orange;
+          tag = ' ½';
+        case WordMark.full:
+          color = AppColors.red;
+          tag = '';
+        case WordMark.omitted:
+          color = AppColors.red;
+          tag = ' (missed)';
+        case WordMark.extra:
+          color = AppColors.red;
+          tag = ' (extra)';
+      }
       rows.add(
         Padding(
           padding: const EdgeInsets.only(bottom: 4),
           child: Row(children: [
-            SizedBox(width: 28, child: Text('${i + 1}', style: TextStyle(fontSize: 11, color: AppColors.secondaryLabel))),
-            Expanded(child: Text(a, style: TextStyle(fontSize: 13, color: AppColors.secondaryLabel))),
+            SizedBox(width: 32, child: Text('${i + 1}', style: TextStyle(fontSize: 11, color: AppColors.secondaryLabel))),
+            Expanded(child: Text(w.expected ?? '—', style: TextStyle(fontSize: 13, color: AppColors.secondaryLabel))),
             Expanded(
               child: Text(
-                b,
+                '${w.typed ?? '—'}$tag',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: ok ? AppColors.green : AppColors.red,
+                  color: color,
                 ),
               ),
             ),
@@ -218,8 +244,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         ),
       );
     }
-    if (n > 80) {
-      rows.add(Text('… ${n - 80} more words', style: TextStyle(color: AppColors.secondaryLabel, fontSize: 12)));
+    if (aligned.length > limit) {
+      rows.add(Text('… ${aligned.length - limit} more words', style: TextStyle(color: AppColors.secondaryLabel, fontSize: 12)));
+    }
+    if (aligned.isEmpty) {
+      rows.add(Text('Nothing was typed in this session.', style: TextStyle(color: AppColors.secondaryLabel, fontSize: 13)));
     }
     return rows;
   }

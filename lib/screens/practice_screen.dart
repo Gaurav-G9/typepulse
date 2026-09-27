@@ -6,6 +6,7 @@ import '../data/exams.dart';
 import '../data/passages.dart';
 import '../data/store.dart';
 import '../theme/app_colors.dart';
+import '../widgets/store_rebuild.dart';
 import 'session_detail_screen.dart';
 
 class PracticeScreen extends StatefulWidget {
@@ -25,7 +26,11 @@ class PracticeScreen extends StatefulWidget {
   State<PracticeScreen> createState() => _PracticeScreenState();
 }
 
-class _PracticeScreenState extends State<PracticeScreen> {
+class _PracticeScreenState extends State<PracticeScreen>
+    with RebuildOn<PracticeScreen> {
+  @override
+  Listenable get rebuildSource => widget.store;
+
   late ExamSpec exam;
   late Passage passage;
   late int remaining;
@@ -90,6 +95,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
   void _onType() {
     if (done) return;
     final input = controller.text;
+    // The controller also notifies on cursor/selection moves (e.g. tapping
+    // the field); only real text changes should start the clock.
+    if (input == last) return;
     if (input.length < last.length) backspaces += last.length - input.length;
     last = input;
     if (!running) _start();
@@ -151,7 +159,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
           children: [
             Text(
               '${remaining}s',
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.indigo),
+              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.indigo),
             ),
             const SizedBox(height: 4),
             Text(
@@ -228,7 +236,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
                         '${e.durationSec ~/ 60} min · target ${e.targetWpm} · ${e.keystrokesGiven} keys · allow ${e.errorAllowance}',
                         style: TextStyle(
                           fontSize: 12,
-                          color: on ? AppColors.canvas.withOpacity(0.7) : AppColors.secondaryLabel,
+                          color: on ? AppColors.canvas.withValues(alpha: 0.7) : AppColors.secondaryLabel,
                         ),
                       ),
                     ],

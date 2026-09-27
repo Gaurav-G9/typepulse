@@ -53,6 +53,7 @@ Android does **not** allow arbitrary exact alarms for silent background work:
 - Android 14+ requires `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_DATA_SYNC` for the continuous sync notification.
 - Android 15+ may cap `dataSync` foreground services (~6 hours / 24h window); bring the app to the foreground periodically to reset.
 - Workmanager timing is **best-effort**, not exact wall-clock every 15:00.
+- The foreground service is **not** auto-started after a reboot (Android 14/15 forbid starting a `dataSync` service from `BOOT_COMPLETED`). Workmanager keeps running after reboot; the ~30s service resumes the next time you open the app.
 
 Toggle path: **You → Keep syncing in background** (requires an AR account signed in). Preference key: `tp_background_sync`.
 
@@ -86,6 +87,26 @@ Auth header style matches the site: `Authorization: JWT <access>`. On **401**, t
 
 ## Scoring note
 
-Aligned with UPSSSC / AR Typing keystroke÷5 scoring and dashboard toggles. Sample history is illustrative until you sync.
+Aligned with UPSSSC / AR Typing keystroke÷5 scoring and dashboard toggles.
+
+Typed text is aligned to the passage **word by word** (edit-distance alignment), so:
+
+- the **untyped rest of the passage is never penalised** — a timed test that stops half-way scores on what you actually typed;
+- a **skipped** or **extra** word costs exactly one full mistake instead of shifting every following word out of place;
+- a word within one character edit of the original is a **half mistake**;
+- a last word cut off by the timer (a prefix of the original) is not a mistake.
+
+The Detailed Comparison on the dashboard shows each word as correct, ½, full, *missed*, or *extra*. AR-synced results keep AR Typing's own mistake counts.
+
+Sample history is shown only while no AR account is signed in; a signed-in account always shows its real history.
+
+## Tests
+
+```bash
+flutter analyze
+flutter test
+```
+
+Covers the scoring engine, AR API parsing / token refresh / paging, store sync (concurrency, account switching, corrupt prefs) and key widget flows.
 
 Package: `com.typepulse.typepulse`

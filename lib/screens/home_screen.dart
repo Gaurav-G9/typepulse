@@ -80,7 +80,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   CupertinoPageRoute(
                       builder: (_) => PracticeScreen(store: store)),
                 ),
-                child: Icon(CupertinoIcons.add_circled_solid,
+                child: const Icon(CupertinoIcons.add_circled_solid,
                     color: AppColors.indigo),
               ),
             ],
@@ -131,7 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(children: [
-                      Icon(CupertinoIcons.chart_bar_alt_fill,
+                      const Icon(CupertinoIcons.chart_bar_alt_fill,
                           size: 16, color: AppColors.blue),
                       const SizedBox(width: 6),
                       Text(
@@ -280,7 +280,7 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
               child: Text(
                 store.arError!,
-                style: TextStyle(fontSize: 12, color: AppColors.red),
+                style: const TextStyle(fontSize: 12, color: AppColors.red),
               ),
             ),
           ),
@@ -466,7 +466,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
-        color: c.withOpacity(0.14),
+        color: c.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(text,

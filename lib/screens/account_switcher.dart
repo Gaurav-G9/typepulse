@@ -200,7 +200,7 @@ class _AccountTile extends StatelessWidget {
             ),
           ),
           if (active)
-            Icon(CupertinoIcons.checkmark_alt, color: AppColors.green, size: 22)
+            const Icon(CupertinoIcons.checkmark_alt, color: AppColors.green, size: 22)
           else
             CupertinoButton(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -210,7 +210,7 @@ class _AccountTile extends StatelessWidget {
           CupertinoButton(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             onPressed: onRemove,
-            child: Icon(CupertinoIcons.trash, size: 18, color: AppColors.red),
+            child: const Icon(CupertinoIcons.trash, size: 18, color: AppColors.red),
           ),
         ],
       ),
