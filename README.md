@@ -10,10 +10,10 @@ Android companion for the **[AR Typing Platform](https://www.artypingplatform.co
 |-----|----------------|-------|
 | **Summary** | Typing History page stat cards + history | Total Tests Attempted · Avg. Gross Speed · Avg. Net Speed · Avg. Accuracy; graph of your last 7 / 15 / 30 results; latest results |
 | **History** | Typing History table | Exam, passage, date, time used, keystrokes, target speed, gross, net (green/red vs target like the site); search; tap for **View Detail** with a word-by-word comparison of passage vs typed text |
-| **Insight** | Typing Insight (`typing-progress`) | Passages typed, min-keystroke hits, avg / best speeds, daily best charts, exams attended, misspelled / added / deleted words (1–30 days) |
 | **You** | Edit Profile + My Subscription | Name, email, phone, date of birth, city/state, address; plan, status, enrolled / valid until, days remaining; accounts, sync, sign out |
 
 - **First launch:** welcome screen asking for your AR Typing login. Signing out returns there.
+- **Signed in on another device?** If AR Typing ends this phone's sign-in (e.g. the same account logs in elsewhere), the app says so — on screen, or with a one-time notification if it happens during background sync — and asks you to sign in again instead of silently showing stale data.
 - **Missing data is never invented:** values the website shows as **NA** / "See In Detail" (e.g. target 0, speeds of tests before 13 Mar 2025) stay NA and are left **out of the graph**. The graph plots one point per real result, in order — days without tests are simply not on it.
 - **Multi-account:** add several AR Typing logins; switch instantly.
 - **Sync:** on open, refresh button, every 30 s while open, Workmanager ~15 min in the background, optional continuous background sync; notification when a new result appears.
@@ -48,7 +48,6 @@ Base: `https://artypingplatform-efb5438ddb1b.herokuapp.com/api/v1` · header `Au
 | POST | `/logout/` | `{refresh}` |
 | GET | `/learning/typedPassages/?page=&page_size=` | **Typing History** (follows `next`) |
 | GET | `/learning/memberTypingStats/` | Total tests · Avg gross · Avg net · Avg accuracy |
-| GET | `/learning/typing-progress/?days=1\|2\|7\|15\|30` | **Typing Insight** (404 = no activity) |
 | GET | `/users/me/` | Name + plan (`is_subscribed`, `subscription.title`) |
 | GET | `/learning/students/profile/` | Profile |
 

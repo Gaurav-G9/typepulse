@@ -2,7 +2,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:typepulse/main.dart';
 import 'package:typepulse/models/ar_result.dart';
-import 'package:typepulse/screens/insight_screen.dart';
 import 'package:typepulse/screens/result_detail_screen.dart';
 import 'package:typepulse/theme/app_colors.dart';
 
@@ -17,7 +16,7 @@ void main() {
       await tester.pumpWidget(TypePulseApp(store: fakeStore()));
       await settle(tester);
 
-      for (final tab in ['History', 'Insight', 'You', 'Summary']) {
+      for (final tab in ['History', 'You', 'Summary']) {
         await tester.tap(find.text(tab).last);
         await settle(tester);
         expect(tester.takeException(), isNull, reason: tab);
@@ -97,22 +96,5 @@ void main() {
     expect(find.text('brwn → brown'), findsOneWidget);
     expect(find.text('1 wrong'), findsOneWidget);
     expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Typing Insight renders website data', (tester) async {
-    phoneSize(tester, 360);
-    resetStorage(signedIn: true);
-    final store = fakeStore();
-    await tester.runAsync(store.load);
-    store.stopAutoSync();
-    await tester.pumpWidget(CupertinoApp(
-        theme: AppColors.cupertinoTheme(), home: InsightScreen(store: store)));
-    await settle(tester);
-    expect(find.text('48.2 wpm'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Misspelled words'), 300);
-    expect(find.textContaining('misspeltword39 → word39'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    store.dispose();
   });
 }

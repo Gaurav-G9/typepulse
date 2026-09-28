@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/ar_account.dart';
 import '../models/ar_result.dart';
-import '../models/typing_insight.dart';
 import '../services/background_bootstrap.dart';
 import '../services/background_sync.dart';
 import '../services/notification_service.dart';
@@ -41,7 +40,6 @@ class AppStore extends ChangeNotifier {
   String? statusMessage;
   String? error;
 
-  final Map<int, TypingInsight?> _insightCache = {};
   Timer? _syncTimer;
   bool _foreground = true;
   bool _autoSyncRunning = false;
@@ -57,6 +55,9 @@ class AppStore extends ChangeNotifier {
 
   /// True when the app should show the welcome / sign-in screen.
   bool get needsLogin => activeAccount == null || !arApi.isLoggedIn;
+
+  /// Why the previous sign-in ended (shown on the welcome screen), if known.
+  String? sessionEndedReason;
 
   // ─── Persistence ────────────────────────────────────────────────────────
 
@@ -162,13 +163,16 @@ class AppStore extends ChangeNotifier {
   Future<void> _loadActiveAccount(SharedPreferences prefs) async {
     final acct = activeAccount!;
     await arApi.loadAccount(acct.id, emailHint: acct.email);
+    final ended =
+        prefs.getBool(BackgroundSync.sessionEndedKey(acct.id)) ?? false;
+    sessionEndedReason =
+        ended && !arApi.isLoggedIn ? ArTypingApi.sessionEndedMessage : null;
     results = _decodeHistory(prefs.getString(historyKey(acct.id)));
     memberStats = _decodeMap(prefs.getString(statsKey(acct.id)));
     userInfo = _decodeMap(prefs.getString(userInfoKey(acct.id)));
     studentProfile = _decodeMap(prefs.getString(profileKey(acct.id)));
     final ts = prefs.getInt(syncedAtKey(acct.id));
     lastSyncedAt = ts == null ? null : DateTime.fromMillisecondsSinceEpoch(ts);
-    _insightCache.clear();
   }
 
   /// Raw typedPassages rows (API order, newest first) → parsed results.
@@ -212,7 +216,6 @@ class AppStore extends ChangeNotifier {
     userInfo = null;
     studentProfile = null;
     lastSyncedAt = null;
-    _insightCache.clear();
   }
 
   // ─── Sign in / accounts ─────────────────────────────────────────────────
@@ -237,6 +240,8 @@ class AppStore extends ChangeNotifier {
       }
       activeAccountId = id;
       final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(BackgroundSync.sessionEndedKey(id));
+      sessionEndedReason = null;
       await _persistAccounts(prefs);
       _clearAccountData();
       // Cached history for an account signed in before shows immediately.
@@ -383,7 +388,6 @@ class AppStore extends ChangeNotifier {
       if (profile != null) studentProfile = profile;
       if (stats != null) memberStats = stats;
       lastSyncedAt = DateTime.now();
-      _insightCache.clear();
 
       final name = displayName;
       if (name != null) {
@@ -412,6 +416,11 @@ class AppStore extends ChangeNotifier {
     } on ArApiException catch (e) {
       if (stale()) return 0;
       // needsReauth: tokens are cleared, so needsLogin shows the sign-in page.
+      if (e.needsReauth) {
+        sessionEndedReason = e.message;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool(BackgroundSync.sessionEndedKey(accountId!), true);
+      }
       if (e.needsReauth || !quiet) error = e.message;
       statusMessage = null;
       return 0;
@@ -496,6 +505,15 @@ class AppStore extends ChangeNotifier {
       await prefs.reload();
     } catch (_) {}
     if (activeAccountId != id) return;
+    // The background isolate may have refreshed — or lost — the sign-in.
+    final acct = activeAccount;
+    if (acct != null) {
+      await arApi.loadAccount(acct.id, emailHint: acct.email);
+      if (!arApi.isLoggedIn &&
+          (prefs.getBool(BackgroundSync.sessionEndedKey(id)) ?? false)) {
+        sessionEndedReason = ArTypingApi.sessionEndedMessage;
+      }
+    }
     final raw = prefs.getString(historyKey(id));
     if (raw != null) results = _decodeHistory(raw);
     memberStats = _decodeMap(prefs.getString(statsKey(id))) ?? memberStats;
@@ -536,19 +554,6 @@ class AppStore extends ChangeNotifier {
     _disposed = true;
     stopAutoSync();
     super.dispose();
-  }
-
-  // ─── Typing Insight ─────────────────────────────────────────────────────
-
-  /// `/learning/typing-progress/?days=` — cached until the next sync.
-  /// Returns null when the website has no activity in that window.
-  Future<TypingInsight?> loadInsight(int days, {bool force = false}) async {
-    if (!force && _insightCache.containsKey(days)) return _insightCache[days];
-    final accountAtStart = activeAccountId;
-    final raw = await arApi.fetchTypingProgress(days);
-    final insight = raw == null ? null : TypingInsight.fromJson(days, raw);
-    if (activeAccountId == accountAtStart) _insightCache[days] = insight;
-    return insight;
   }
 
   // ─── Member stats (the four cards on the website) ───────────────────────

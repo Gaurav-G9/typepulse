@@ -17,7 +17,8 @@ class IosCard extends StatelessWidget {
       width: double.infinity,
       padding: padding,
       decoration: BoxDecoration(
-          color: AppColors.card, borderRadius: BorderRadius.circular(16)),
+          color: AppColors.groupedBackground,
+          borderRadius: BorderRadius.circular(16)),
       child: child,
     );
     if (onTap == null) return card;

@@ -14,20 +14,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
-  group('insight + account', () {
-    test('typing-progress 404 means no activity', () async {
-      final api = ArTypingApi(
-        httpClient: MockClient((req) async {
-          expect(req.url.path, endsWith('/learning/typing-progress/'));
-          expect(req.url.queryParameters['days'], '7');
-          return json({'detail': 'Not found.'}, 404);
-        }),
-      )
-        ..accountId = 'me'
-        ..accessToken = 'tok';
-      expect(await api.fetchTypingProgress(7), isNull);
-    });
-
+  group('account', () {
     test('users/me is fetched with the JWT header', () async {
       final api = ArTypingApi(
         httpClient: MockClient((req) async {
@@ -106,6 +93,46 @@ void main() {
         api.fetchProfile(),
         throwsA(isA<ArApiException>()
             .having((e) => e.needsReauth, 'needsReauth', isTrue)),
+      );
+      expect(api.isLoggedIn, isFalse);
+    });
+
+    test('uses tokens a background isolate already refreshed', () async {
+      var refreshCalls = 0;
+      final client = MockClient((req) async {
+        if (req.url.path.endsWith('/jwt/refresh/')) {
+          refreshCalls++;
+          return json({'detail': 'Token is blacklisted'}, 401);
+        }
+        return req.headers['Authorization'] == 'JWT fresh'
+            ? json({'ok': true})
+            : json({'detail': 'expired'}, 401);
+      });
+      // Background isolate rotated the tokens and saved them.
+      FlutterSecureStorage.setMockInitialValues({
+        'ar_access_me@x.com': 'fresh',
+        'ar_refresh_me@x.com': 'r2',
+      });
+      final api = await signedIn(client); // still holds old/r1 in memory
+      expect(await api.fetchProfile(), containsPair('ok', true));
+      expect(refreshCalls, 0, reason: 'must not burn the stale refresh token');
+      expect(api.accessToken, 'fresh');
+      expect(api.refreshToken, 'r2');
+    });
+
+    test('signed in on another device → clear re-login request', () async {
+      final client = MockClient((req) async {
+        if (req.url.path.endsWith('/jwt/refresh/')) {
+          return json({'access': 'new'}); // refresh "works"…
+        }
+        return json({'detail': 'expired'}, 401); // …but every token is refused
+      });
+      final api = await signedIn(client);
+      await expectLater(
+        api.fetchProfile(),
+        throwsA(isA<ArApiException>()
+            .having((e) => e.needsReauth, 'needsReauth', isTrue)
+            .having((e) => e.message, 'message', contains('another device'))),
       );
       expect(api.isLoggedIn, isFalse);
     });

@@ -28,7 +28,7 @@ class ResultsChart extends StatelessWidget {
           results: results,
           gridColor: AppColors.separator,
           labelColor: AppColors.secondaryLabel,
-          holeColor: AppColors.card,
+          holeColor: AppColors.groupedBackground,
         ),
       ),
     );

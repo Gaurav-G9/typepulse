@@ -229,7 +229,7 @@ class ProfileScreen extends StatelessWidget {
   }
 
   Widget _header(String t) => Padding(
-        padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
+        padding: const EdgeInsets.fromLTRB(0, 24, 0, 8),
         child: Text(t,
             style: TextStyle(
                 fontSize: 13,
@@ -243,14 +243,20 @@ class ProfileScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 110,
+              width: 104,
               child: Text(k,
                   style:
                       TextStyle(fontSize: 13, color: AppColors.secondaryLabel)),
             ),
             Expanded(
-              child: Text(v,
-                  style: TextStyle(fontSize: 13, color: AppColors.label)),
+              child: Text(
+                v,
+                // An email is one long "word": ellipsize instead of
+                // breaking it mid-word.
+                maxLines: v.contains(' ') ? 3 : 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13, color: AppColors.label),
+              ),
             ),
           ],
         ),
