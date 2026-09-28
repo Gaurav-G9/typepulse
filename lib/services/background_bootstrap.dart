@@ -202,7 +202,8 @@ void backgroundServiceOnStart(ServiceInstance service) async {
       final prefs = await SharedPreferences.getInstance();
       // This isolate lives for hours; re-read values written by the UI.
       await prefs.reload();
-      final stillWanted = prefs.getBool(BackgroundSync.kBackgroundSync) ?? false;
+      final stillWanted =
+          prefs.getBool(BackgroundSync.kBackgroundSync) ?? false;
       if (!stillWanted) {
         timer.cancel();
         service.stopSelf();

@@ -8,249 +8,256 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:typepulse/data/ar_api.dart';
 import 'package:typepulse/data/store.dart';
-import 'package:typepulse/models/session.dart';
-
-TypingSession session(String id, DateTime at, {double net = 30}) =>
-    AppStore.buildSession(
-      allottedSec: 300,
-      timeTakenSec: 300,
-      language: 'en',
-      mode: 'practice',
-      examTitle: 'Exam',
-      passageTitle: 'P',
-      expected: 'a b c',
-      typed: 'a b c',
-      backspaceCount: 0,
-      targetWpm: 30,
-    ).copyForTest(id: id, startedAt: at, netWpm: net);
-
-extension on TypingSession {
-  TypingSession copyForTest(
-      {required String id, required DateTime startedAt, double? netWpm}) {
-    final j = toJson()
-      ..['id'] = id
-      ..['startedAt'] = startedAt.toIso8601String();
-    if (netWpm != null) j['netWpm'] = netWpm;
-    return TypingSession.fromJson(j);
-  }
-}
 
 http.Response json(Object body, [int status = 200]) =>
     http.Response(jsonEncode(body), status,
         headers: {'content-type': 'application/json'});
 
-Map<String, dynamic> row(int id, String day) => {
+Map<String, dynamic> row(int id, String date,
+        {Object? gross = 40, Object? net = 39}) =>
+    {
       'id': id,
-      'exam_title': 'UPSSSC English',
+      'exam_title': 'UPSSSC Assistant English',
       'passage_title': 'Passage $id',
-      'created_at': '${day}T10:00:00Z',
+      'typing_date': date,
       'time_taken': 5,
       'key_strokes_typed': 1000,
-      'gross_speed': 40,
-      'net_speed': 39,
+      'target_speed': 30,
+      'gross_speed': gross,
+      'net_speed': net,
     };
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('aggregates', () {
-    test('streak survives until the first test of today', () {
-      final store = AppStore();
-      final now = DateTime.now();
-      DateTime daysAgo(int n) => DateTime(now.year, now.month, now.day - n, 12);
-      store.sessions = [
-        session('a', daysAgo(1)),
-        session('b', daysAgo(2)),
-        session('c', daysAgo(4)),
-      ];
-      expect(store.streak, 2);
-      store.sessions = [session('t', daysAgo(0)), ...store.sessions];
-      expect(store.streak, 3);
-      store.dispose();
-    });
+  late int historyCalls;
+  late int insightCalls;
+  late Completer<void>? gate;
+  late List<Map<String, dynamic>> historyA;
 
-    test('lastNNetWpm buckets by calendar day, today last', () {
-      final store = AppStore();
-      final now = DateTime.now();
-      store.sessions = [
-        session('a', DateTime(now.year, now.month, now.day, 9), net: 41),
-        session('b', DateTime(now.year, now.month, now.day - 6, 9), net: 33),
-      ];
-      final series = store.lastNNetWpm(7);
-      expect(series.length, 7);
-      expect(series.last, 41);
-      expect(series.first, 33);
-      store.dispose();
-    });
+  MockClient client() => MockClient((req) async {
+        final path = req.url.path;
+        final token = req.headers['Authorization'];
+        if (path.endsWith('/jwt/create/')) {
+          final body = jsonDecode(req.body) as Map<String, dynamic>;
+          if (body['password'] != 'right') {
+            return json({'detail': 'No active account found'}, 401);
+          }
+          return json({'access': 'tokA', 'refresh': 'rA'});
+        }
+        if (path.endsWith('/typedPassages/')) {
+          historyCalls++;
+          if (gate != null) await gate!.future;
+          if (token == 'JWT tokA') {
+            return json(
+                {'count': historyA.length, 'next': null, 'results': historyA});
+          }
+          return json({'count': 0, 'next': null, 'results': []});
+        }
+        if (path.endsWith('/students/profile/')) {
+          return json({'phone_number': '9999999999', 'city': 'Lucknow'});
+        }
+        if (path.endsWith('/users/me/')) {
+          return json({
+            'first_name': 'Asha',
+            'last_name': 'Verma',
+            'email': 'a@x.com',
+            'is_subscribed': true,
+            'days_remaining': 12,
+            'expiration_date': '2026-10-10',
+            'subscription_plan': {'name': 'Premium 3 Months'},
+          });
+        }
+        if (path.endsWith('/memberTypingStats/')) {
+          return json({
+            'total_tests': 57,
+            'avg_gross_speed': '40.50',
+            'avg_net_speed': 39.25,
+            'avg_accuracy_percentage': 97.5,
+          });
+        }
+        if (path.endsWith('/typing-progress/')) {
+          insightCalls++;
+          return json({'passage_count': 5, 'avg_gross_speed': 41.2});
+        }
+        return json({}, 404);
+      });
+
+  Future<AppStore> store({
+    Map<String, Object> prefs = const {},
+    Map<String, String> tokens = const {},
+  }) async {
+    SharedPreferences.setMockInitialValues(Map.of(prefs));
+    FlutterSecureStorage.setMockInitialValues(Map.of(tokens));
+    final s = AppStore(api: ArTypingApi(httpClient: client()));
+    await s.load();
+    s.stopAutoSync();
+    return s;
+  }
+
+  final twoAccounts = {
+    'tp_accounts': jsonEncode([
+      {'id': 'a@x.com', 'email': 'a@x.com', 'displayName': 'a'},
+      {'id': 'b@x.com', 'email': 'b@x.com', 'displayName': 'b'},
+    ]),
+    'tp_active_account_id': 'a@x.com',
+  };
+  const tokens = {
+    'ar_access_a@x.com': 'tokA',
+    'ar_refresh_a@x.com': 'rA',
+    'ar_access_b@x.com': 'tokB',
+    'ar_refresh_b@x.com': 'rB',
+  };
+
+  setUp(() {
+    historyCalls = 0;
+    insightCalls = 0;
+    gate = null;
+    historyA = [row(2, '2026-09-21T10:00:00Z'), row(1, '2026-09-20T10:00:00Z')];
   });
 
-  group('AR sync', () {
-    late int historyCalls;
-    late int insightCalls;
-    late Completer<void>? gate;
-
-    MockClient client() => MockClient((req) async {
-          final path = req.url.path;
-          if (path.endsWith('/typedPassages/')) {
-            historyCalls++;
-            if (gate != null) await gate!.future;
-            final token = req.headers['Authorization'];
-            if (token == 'JWT tokA') {
-              return json({
-                'count': 2,
-                'next': null,
-                'results': [row(1, '2026-09-20'), row(2, '2026-09-21')],
-              });
-            }
-            return json({'count': 0, 'next': null, 'results': []});
-          }
-          if (path.endsWith('/profile/')) return json({'full_name': 'Asha'});
-          if (path.endsWith('/memberTypingStats/')) {
-            return json({
-              'total_tests': 2,
-              'avg_gross_speed': '40.50',
-              'avg_net_speed': 39.25,
-              'avg_accuracy_percentage': 97.5,
-            });
-          }
-          if (path.endsWith('/users/me/')) {
-            return json({
-              'first_name': 'Asha',
-              'is_subscribed': true,
-              'subscription': {'title': 'Gold 3 Months'},
-            });
-          }
-          if (path.endsWith('/typing-progress/')) {
-            insightCalls++;
-            return json({
-              'passage_count': 5,
-              'min_achieved_count': 3,
-              'avg_gross_speed': 41.2,
-              'avg_net_speed': 39.8,
-              'best_gross_speed_data': {
-                'gross_speed': 45.1,
-                'corresponding_net_speed': 44.0,
-              },
-              'best_net_speed_data': {'net_speed': 44.5},
-              'best_gross_speed_list': [40, 42.5, 45.1],
-              'exam_title': 'UPSSSC, SSC CHSL',
-              'target_speed': '30, 35',
-              'time_duration': '10:00, 15:00',
-              'typing_dates': '2026-09-20',
-              'most_misspelled_words': {
-                'recieve': {'correct': 'receive', 'count': 3},
-                'teh': {'correct': 'the', 'count': 5},
-              },
-              'most_deleted_words': {'a': 2},
-            });
-          }
-          return json({}, 404);
-        });
-
-    Future<AppStore> loadedStore() async {
-      SharedPreferences.setMockInitialValues({
-        'tp_accounts': jsonEncode([
-          {'id': 'a@x.com', 'email': 'a@x.com', 'displayName': 'a'},
-          {'id': 'b@x.com', 'email': 'b@x.com', 'displayName': 'b'},
-        ]),
-        'tp_active_account_id': 'a@x.com',
-      });
-      FlutterSecureStorage.setMockInitialValues({
-        'ar_access_a@x.com': 'tokA',
-        'ar_refresh_a@x.com': 'rA',
-        'ar_access_b@x.com': 'tokB',
-        'ar_refresh_b@x.com': 'rB',
-      });
-      final store = AppStore(api: ArTypingApi(httpClient: client()));
-      await store.load();
-      return store;
-    }
-
-    setUp(() {
-      historyCalls = 0;
-      insightCalls = 0;
-      gate = null;
-    });
-
-    test('signed-in account shows real history, never sample data', () async {
-      final store = await loadedStore();
-      await store.syncArHistory();
-      expect(store.sessions.map((s) => s.id), containsAll(['ar-1', 'ar-2']));
-      expect(store.sessions.any((s) => s.id.startsWith('seed-')), isFalse);
-      expect(store.profile.name, 'Asha');
-      expect(store.remoteTotalTests, 2);
-      store.dispose();
-    });
-
-    test('member stats, plan and insight match the website schema', () async {
-      final store = await loadedStore();
-      await store.syncArHistory();
-      expect(store.remoteAvgAccuracy, 97.5);
-      expect(store.remoteAvgGross, 40.5);
-      expect(store.arPlanTitle, 'Gold 3 Months');
-      expect(store.arSubscribed, isTrue);
-
-      final insight = await store.loadInsight(7);
-      expect(insight!.passageCount, 5);
-      expect(insight.bestGross!.speed, 45.1);
-      expect(insight.bestGross!.other, 44.0);
-      expect(insight.dailyBestGross, [40, 42.5, 45.1]);
-      expect(insight.exams.map((e) => e.title), ['UPSSSC', 'SSC CHSL']);
-      expect(insight.exams.last.targetWpm, 35);
-      expect(insight.misspelled.first.word, 'teh');
-      expect(insight.misspelled.first.correct, 'the');
-      await store.loadInsight(7); // cached
-      expect(insightCalls, 1);
-      store.dispose();
-    });
-
-    test('concurrent syncs share one request', () async {
-      gate = Completer<void>();
-      final store = await loadedStore(); // kicks off a quiet sync
-      final manual = store.manualRefresh();
-      final again = store.syncArHistory();
-      gate!.complete();
-      await Future.wait([manual, again]);
-      expect(historyCalls, 1);
-      store.dispose();
-    });
-
-    test('switching accounts mid-sync does not leak history', () async {
-      gate = Completer<void>();
-      final store = await loadedStore(); // A's sync is now blocked on gate
-      await store.switchAccount('b@x.com');
-      gate!.complete();
-      await store.syncArHistory();
-      await pumpEventQueue();
-      expect(store.activeAccountId, 'b@x.com');
-      expect(store.sessions.where((s) => s.id.startsWith('ar-')), isEmpty);
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('tp_sessions_b@x.com') ?? '',
-          isNot(contains('ar-1')));
-      store.dispose();
-    });
-
-    test('local practice survives a sync', () async {
-      final store = await loadedStore();
-      await store.syncArHistory();
-      final local = session('local-1', DateTime.now());
-      await store.addSession(local);
-      await store.syncArHistory();
-      expect(store.sessions.map((s) => s.id), contains('local-1'));
-      store.dispose();
-    });
+  test('first launch: no data at all, login required', () async {
+    final s = await store();
+    expect(s.needsLogin, isTrue);
+    expect(s.results, isEmpty);
+    expect(s.memberStats, isNull);
+    expect(s.displayName, isNull);
+    s.dispose();
   });
 
-  test('corrupt prefs fall back instead of hanging on the splash', () async {
-    SharedPreferences.setMockInitialValues({
+  test('old sample/local data is purged on startup', () async {
+    final s = await store(prefs: {
+      'tp_sessions': '[{"id":"seed-1"}]',
+      'tp_profile': '{"name":"Gaurav"}',
+      'tp_sessions_a@x.com': '[]',
+      'tp_profile_a@x.com': '{}',
+    });
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+        prefs.getKeys().where(
+            (k) => k.startsWith('tp_sessions') || k.startsWith('tp_profile')),
+        isEmpty);
+    expect(s.results, isEmpty);
+    s.dispose();
+  });
+
+  test('login → real history, stats, profile and subscription', () async {
+    final s = await store();
+    expect(await s.login('a@x.com', 'wrong'), isFalse);
+    expect(s.error, contains('Invalid email or password'));
+    expect(s.needsLogin, isTrue);
+
+    expect(await s.login('a@x.com', 'right'), isTrue, reason: s.error);
+    expect(s.needsLogin, isFalse);
+    expect(s.results.map((r) => r.id), ['ar-2', 'ar-1']);
+    expect(s.totalTests, 57);
+    expect(s.avgGross, 40.5);
+    expect(s.avgNet, 39.25);
+    expect(s.avgAccuracy, 97.5);
+    expect(s.displayName, 'Asha Verma');
+    expect(s.planName, 'Premium 3 Months');
+    expect(s.daysRemaining, 12);
+    expect(s.studentProfile?['city'], 'Lucknow');
+    s.dispose();
+  });
+
+  test('graph uses the last results only and skips NA values', () async {
+    historyA = [
+      row(5, '2026-09-25T10:00:00Z', gross: 44, net: 43),
+      row(4, '2026-09-24T10:00:00Z', gross: 42, net: 41),
+      row(3, '2025-01-10', gross: 0, net: 0), // "See In Detail" → no data
+      row(2, '2026-09-10T10:00:00Z', gross: 40, net: 39),
+      row(1, '2026-09-01T10:00:00Z', gross: 38, net: 37),
+    ];
+    final s = await store(prefs: twoAccounts, tokens: tokens);
+    await s.syncNow();
+    final chart = s.lastResultsForChart(3);
+    // Oldest → newest, three most recent results that have data.
+    expect(chart.map((r) => r.id), ['ar-2', 'ar-4', 'ar-5']);
+    expect(s.lastResultsForChart(30).any((r) => r.id == 'ar-3'), isFalse);
+    s.dispose();
+  });
+
+  test('history persists as raw website rows and reloads', () async {
+    final s = await store(prefs: twoAccounts, tokens: tokens);
+    await s.syncNow();
+    s.dispose();
+    final prefs = await SharedPreferences.getInstance();
+    final raw = jsonDecode(prefs.getString('tp_history_a@x.com')!) as List;
+    expect(raw.first['passage_title'], 'Passage 2');
+
+    final again = AppStore(api: ArTypingApi(httpClient: client()));
+    await again.load();
+    again.stopAutoSync();
+    expect(again.results.map((r) => r.id), ['ar-2', 'ar-1']);
+    again.dispose();
+  });
+
+  test('concurrent syncs share one request', () async {
+    gate = Completer<void>();
+    final s = await store(prefs: twoAccounts, tokens: tokens);
+    final a = s.manualRefresh();
+    final b = s.syncNow();
+    gate!.complete();
+    await Future.wait([a, b]);
+    expect(historyCalls, 1);
+    s.dispose();
+  });
+
+  test('switching accounts mid-sync does not leak history', () async {
+    gate = Completer<void>();
+    final s = await store(prefs: twoAccounts, tokens: tokens);
+    await s.switchAccount('b@x.com');
+    gate!.complete();
+    await s.syncNow();
+    await pumpEventQueue();
+    expect(s.activeAccountId, 'b@x.com');
+    expect(s.results, isEmpty);
+    s.dispose();
+  });
+
+  test('logout returns to the sign-in screen', () async {
+    final s = await store(prefs: twoAccounts, tokens: tokens);
+    expect(s.needsLogin, isFalse);
+    await s.logout();
+    expect(s.needsLogin, isTrue);
+    s.dispose();
+  });
+
+  test('removing the last account clears everything', () async {
+    final s = await store(prefs: {
+      'tp_accounts': jsonEncode([
+        {'id': 'a@x.com', 'email': 'a@x.com', 'displayName': 'a'}
+      ]),
+      'tp_active_account_id': 'a@x.com',
+    }, tokens: tokens);
+    await s.syncNow();
+    await s.removeAccount('a@x.com');
+    expect(s.needsLogin, isTrue);
+    expect(s.results, isEmpty);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('tp_history_a@x.com'), isNull);
+    s.dispose();
+  });
+
+  test('insight is cached until the next sync', () async {
+    final s = await store(prefs: twoAccounts, tokens: tokens);
+    expect((await s.loadInsight(7))!.passageCount, 5);
+    await s.loadInsight(7);
+    expect(insightCalls, 1);
+    await s.syncNow();
+    await s.loadInsight(7);
+    expect(insightCalls, 2);
+    s.dispose();
+  });
+
+  test('corrupt prefs do not block startup', () async {
+    final s = await store(prefs: {
       'tp_accounts': '{not json',
-      'tp_sessions': '[{"broken": true}]',
+      'tp_history_a@x.com': '[{"broken": ',
     });
-    FlutterSecureStorage.setMockInitialValues({});
-    final store = AppStore();
-    await store.load();
-    expect(store.loaded, isTrue);
-    expect(store.sessions, isNotEmpty); // sample history for guests
-    store.dispose();
+    expect(s.loaded, isTrue);
+    expect(s.needsLogin, isTrue);
+    s.dispose();
   });
 }

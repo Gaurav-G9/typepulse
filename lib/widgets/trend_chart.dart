@@ -1,22 +1,22 @@
 import 'dart:math';
 import 'dart:ui' as ui;
+
 import 'package:flutter/cupertino.dart';
+import 'package:intl/intl.dart';
+
+import '../models/ar_result.dart';
 import '../theme/app_colors.dart';
 
-/// Minimal net-WPM (and optional accuracy) trend for 7 / 15 / 30 days.
-class TrendChart extends StatelessWidget {
-  final List<double> netWpm;
-  final List<double>? accuracy;
-  final int days;
+/// Gross and net WPM of real Typing History results, one point per result
+/// (oldest → newest). Missing values are skipped — never plotted as 0 — and
+/// days without tests simply don't appear.
+class ResultsChart extends StatelessWidget {
+  final List<ArResult> results;
   final double height;
+  const ResultsChart({super.key, required this.results, this.height = 190});
 
-  const TrendChart({
-    super.key,
-    required this.netWpm,
-    this.accuracy,
-    required this.days,
-    this.height = 160,
-  });
+  static const grossColor = AppColors.blue;
+  static const netColor = AppColors.green;
 
   @override
   Widget build(BuildContext context) {
@@ -24,231 +24,164 @@ class TrendChart extends StatelessWidget {
       height: height,
       width: double.infinity,
       child: CustomPaint(
-        painter: _TrendPainter(
-          net: netWpm,
-          accuracy: accuracy,
-          days: days,
-          lineColor: AppColors.ringMove,
-          accColor: AppColors.ringStand,
+        painter: _ResultsPainter(
+          results: results,
           gridColor: AppColors.separator,
           labelColor: AppColors.secondaryLabel,
-          fillColor: AppColors.ringMove.withValues(alpha: AppColors.dark ? 0.18 : 0.12),
+          holeColor: AppColors.card,
         ),
       ),
     );
   }
 }
 
-class _TrendPainter extends CustomPainter {
-  final List<double> net;
-  final List<double>? accuracy;
-  final int days;
-  final Color lineColor;
-  final Color accColor;
+class _ResultsPainter extends CustomPainter {
+  final List<ArResult> results;
   final Color gridColor;
   final Color labelColor;
-  final Color fillColor;
+  final Color holeColor;
 
-  _TrendPainter({
-    required this.net,
-    required this.accuracy,
-    required this.days,
-    required this.lineColor,
-    required this.accColor,
+  _ResultsPainter({
+    required this.results,
     required this.gridColor,
     required this.labelColor,
-    required this.fillColor,
+    required this.holeColor,
   });
+
+  TextPainter _text(String s, double size) => TextPainter(
+        text: TextSpan(
+            text: s, style: TextStyle(fontSize: size, color: labelColor)),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
 
   @override
   void paint(Canvas canvas, Size size) {
-    final padL = 36.0;
-    final padR = 12.0;
-    final padT = 16.0;
-    final padB = 28.0;
-    final chart = Rect.fromLTRB(padL, padT, size.width - padR, size.height - padB);
+    const padL = 34.0, padR = 12.0, padT = 12.0, padB = 24.0;
+    final chart =
+        Rect.fromLTRB(padL, padT, size.width - padR, size.height - padB);
 
-    final values = net.isEmpty ? List.filled(days, 0.0) : net;
-    final maxV = max(40.0, values.fold<double>(0, max) * 1.15);
-    final minV = 0.0;
+    final values = <double>[
+      for (final r in results) ...[
+        if ((r.grossWpm ?? 0) > 0) r.grossWpm!,
+        if ((r.netWpm ?? 0) > 0) r.netWpm!,
+      ]
+    ];
+    if (values.isEmpty) {
+      final tp = _text('No results with speed data yet', 13);
+      tp.paint(canvas, chart.center - Offset(tp.width / 2, tp.height / 2));
+      return;
+    }
+    final top = max(10.0, (values.reduce(max) / 10).ceil() * 10.0);
 
-    // Grid
-    final gridPaint = Paint()
-      ..color = gridColor.withValues(alpha: 0.55)
+    final grid = Paint()
+      ..color = gridColor
       ..strokeWidth = 1;
-    for (var i = 0; i <= 3; i++) {
-      final y = chart.top + chart.height * i / 3;
-      canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), gridPaint);
-      final label = (maxV * (1 - i / 3)).round().toString();
-      final tp = TextPainter(
-        text: TextSpan(
-          text: label,
-          style: TextStyle(fontSize: 10, color: labelColor, fontWeight: FontWeight.w500),
-        ),
-        textDirection: ui.TextDirection.ltr,
-      )..layout();
+    for (var i = 0; i <= 2; i++) {
+      final y = chart.top + chart.height * i / 2;
+      canvas.drawLine(Offset(chart.left, y), Offset(chart.right, y), grid);
+      final tp = _text((top * (1 - i / 2)).round().toString(), 10);
       tp.paint(canvas, Offset(padL - tp.width - 6, y - tp.height / 2));
     }
 
-    if (values.every((v) => v <= 0)) {
-      final tp = TextPainter(
-        text: TextSpan(
-          text: 'No workouts in this range',
-          style: TextStyle(fontSize: 13, color: labelColor),
-        ),
-        textDirection: ui.TextDirection.ltr,
-      )..layout(maxWidth: chart.width);
-      tp.paint(
-        canvas,
-        Offset(chart.left + (chart.width - tp.width) / 2, chart.center.dy - tp.height / 2),
-      );
-      _xLabels(canvas, chart);
-      return;
-    }
+    final n = results.length;
+    double x(int i) =>
+        n == 1 ? chart.center.dx : chart.left + chart.width * i / (n - 1);
+    double y(double v) => chart.bottom - v / top * chart.height;
 
-    Offset pt(int i, double v) {
-      final n = max(1, values.length - 1);
-      final x = chart.left + chart.width * (i / n);
-      final y = chart.bottom - ((v - minV) / (maxV - minV)) * chart.height;
-      return Offset(x, y);
-    }
-
-    final path = Path();
-    final fill = Path();
-    for (var i = 0; i < values.length; i++) {
-      final p = pt(i, values[i]);
-      if (i == 0) {
-        path.moveTo(p.dx, p.dy);
-        fill.moveTo(p.dx, chart.bottom);
-        fill.lineTo(p.dx, p.dy);
-      } else {
-        path.lineTo(p.dx, p.dy);
-        fill.lineTo(p.dx, p.dy);
-      }
-    }
-    fill.lineTo(pt(values.length - 1, values.last).dx, chart.bottom);
-    fill.close();
-
-    canvas.drawPath(fill, Paint()..color = fillColor);
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = lineColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round,
-    );
-
-    // Dots only on active days
-    final dot = Paint()..color = lineColor;
-    final hole = Paint()..color = AppColors.card;
-    for (var i = 0; i < values.length; i++) {
-      if (values[i] <= 0) continue;
-      final p = pt(i, values[i]);
-      canvas.drawCircle(p, 4.5, dot);
-      canvas.drawCircle(p, 2.2, hole);
-    }
-
-    // Optional accuracy as thin dashed-feel secondary line (scaled 0-100 → chart)
-    if (accuracy != null && accuracy!.length == values.length) {
-      final accPath = Path();
+    void series(double? Function(ArResult) pick, Color color) {
+      final path = Path();
       var started = false;
-      for (var i = 0; i < accuracy!.length; i++) {
-        final a = accuracy![i];
-        if (a <= 0) continue;
-        final mapped = minV + (a / 100.0) * (maxV - minV);
-        final p = pt(i, mapped);
-        if (!started) {
-          accPath.moveTo(p.dx, p.dy);
-          started = true;
-        } else {
-          accPath.lineTo(p.dx, p.dy);
-        }
+      final pts = <Offset>[];
+      for (var i = 0; i < n; i++) {
+        final v = pick(results[i]);
+        if (v == null || v <= 0) continue; // no data → skip, never draw 0
+        final p = Offset(x(i), y(v));
+        pts.add(p);
+        started ? path.lineTo(p.dx, p.dy) : path.moveTo(p.dx, p.dy);
+        started = true;
       }
       canvas.drawPath(
-        accPath,
+        path,
         Paint()
-          ..color = accColor.withValues(alpha: 0.85)
+          ..color = color
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5
-          ..strokeCap = StrokeCap.round,
+          ..strokeWidth = 2.2
+          ..strokeJoin = StrokeJoin.round,
       );
+      final dot = Paint()..color = color;
+      final hole = Paint()..color = holeColor;
+      for (final p in pts) {
+        canvas.drawCircle(p, n > 20 ? 2.5 : 4, dot);
+        if (n <= 20) canvas.drawCircle(p, 1.8, hole);
+      }
     }
 
-    _xLabels(canvas, chart);
-  }
+    series((r) => r.grossWpm, ResultsChart.grossColor);
+    series((r) => r.netWpm, ResultsChart.netColor);
 
-  void _xLabels(Canvas canvas, Rect chart) {
-    final labels = days <= 7
-        ? ['−6', '−5', '−4', '−3', '−2', '−1', 'Today']
-        : days <= 15
-            ? ['−14', '−10', '−7', '−3', 'Today']
-            : ['−29', '−20', '−10', 'Today'];
-    final positions = days <= 7
-        ? [0, 1, 2, 3, 4, 5, 6]
-        : days <= 15
-            ? [0, 4, 7, 11, 14]
-            : [0, 9, 19, 29];
-    for (var i = 0; i < labels.length && i < positions.length; i++) {
-      final idx = positions[i].clamp(0, days - 1);
-      final n = max(1, days - 1);
-      final x = chart.left + chart.width * (idx / n);
-      final tp = TextPainter(
-        text: TextSpan(
-          text: labels[i],
-          style: TextStyle(fontSize: 10, color: labelColor),
-        ),
-        textDirection: ui.TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, Offset(x - tp.width / 2, chart.bottom + 8));
+    // Dates of the first and last result shown.
+    final fmt = DateFormat('d MMM');
+    final first = _text(fmt.format(results.first.date), 10);
+    first.paint(canvas, Offset(chart.left, chart.bottom + 7));
+    if (n > 1) {
+      final last = _text(fmt.format(results.last.date), 10);
+      last.paint(canvas, Offset(chart.right - last.width, chart.bottom + 7));
     }
   }
 
   @override
-  bool shouldRepaint(covariant _TrendPainter old) =>
-      old.net != net || old.accuracy != accuracy || old.days != days || old.lineColor != lineColor;
+  bool shouldRepaint(covariant _ResultsPainter old) =>
+      old.results != results ||
+      old.gridColor != gridColor ||
+      old.labelColor != labelColor;
 }
 
-/// Compact segmented control for 7 / 15 / 30.
+/// Segmented "Last 7 / 15 / 30 tests" selector.
 class RangeChips extends StatelessWidget {
   final int selected;
+  final List<int> options;
   final ValueChanged<int> onChanged;
-  const RangeChips({super.key, required this.selected, required this.onChanged});
+  const RangeChips({
+    super.key,
+    required this.selected,
+    required this.onChanged,
+    this.options = const [7, 15, 30],
+  });
 
   @override
   Widget build(BuildContext context) {
-    Widget chip(int days, String label) {
-      final on = selected == days;
-      return GestureDetector(
-        onTap: () => onChanged(days),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-          decoration: BoxDecoration(
-            color: on ? AppColors.label : AppColors.fill,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: on ? AppColors.canvas : AppColors.secondaryLabel,
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: AppColors.fill,
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final o in options)
+            GestureDetector(
+              onTap: () => onChanged(o),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: o == selected ? AppColors.card : null,
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Text(
+                  '$o',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight:
+                        o == selected ? FontWeight.w700 : FontWeight.w500,
+                    color: AppColors.label,
+                  ),
+                ),
+              ),
             ),
-          ),
-        ),
-      );
-    }
-
-    return Row(
-      children: [
-        chip(7, '7D'),
-        const SizedBox(width: 8),
-        chip(15, '15D'),
-        const SizedBox(width: 8),
-        chip(30, '30D'),
-      ],
+        ],
+      ),
     );
   }
 }

@@ -87,7 +87,8 @@ class AccountSwitcherSheet extends StatelessWidget {
                       : ListView.separated(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           itemCount: store.accounts.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
                           itemBuilder: (ctx, i) {
                             final a = store.accounts[i];
                             final active = a.id == store.activeAccountId;
@@ -200,7 +201,8 @@ class _AccountTile extends StatelessWidget {
             ),
           ),
           if (active)
-            const Icon(CupertinoIcons.checkmark_alt, color: AppColors.green, size: 22)
+            const Icon(CupertinoIcons.checkmark_alt,
+                color: AppColors.green, size: 22)
           else
             CupertinoButton(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -210,7 +212,8 @@ class _AccountTile extends StatelessWidget {
           CupertinoButton(
             padding: const EdgeInsets.symmetric(horizontal: 4),
             onPressed: onRemove,
-            child: const Icon(CupertinoIcons.trash, size: 18, color: AppColors.red),
+            child: const Icon(CupertinoIcons.trash,
+                size: 18, color: AppColors.red),
           ),
         ],
       ),

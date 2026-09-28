@@ -1,18 +1,73 @@
 import 'package:flutter/cupertino.dart';
+import 'package:intl/intl.dart';
 
 import '../data/store.dart';
-import '../screens/account_switcher.dart';
-import '../screens/ar_login_sheet.dart';
 import '../theme/app_colors.dart';
 import '../widgets/ios_card.dart';
+import 'account_switcher.dart';
 
+/// "You": AR Typing profile, My Subscription, accounts and app settings.
 class ProfileScreen extends StatelessWidget {
   final AppStore store;
   const ProfileScreen({super.key, required this.store});
 
+  static String? _field(Map<String, dynamic>? m, String k) {
+    final v = m?[k];
+    if (v == null) return null;
+    final s = v.toString().trim();
+    return s.isEmpty ? null : s;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final p = store.profile;
+    final p = store.studentProfile;
+    final dob = _field(p, 'date_of_birth');
+    final dobDate = dob == null ? null : DateTime.tryParse(dob);
+    final city = _field(p, 'city');
+    final state = _field(p, 'state');
+    final profileRows = <(String, String)>[
+      if (store.email != null) ('Email', store.email!),
+      if (_field(p, 'phone_number') != null)
+        ('Phone', _field(p, 'phone_number')!),
+      if (dob != null)
+        (
+          'Date of birth',
+          dobDate == null ? dob : DateFormat('dd/MM/yyyy').format(dobDate)
+        ),
+      if (city != null || state != null)
+        ('City / State', [city, state].whereType<String>().join(', ')),
+      if (_field(p, 'address') != null) ('Address', _field(p, 'address')!),
+    ];
+
+    final dateFmt = DateFormat('dd MMM yyyy');
+    final subscribed = store.isSubscribed;
+    final days = store.daysRemaining;
+    final String? status = subscribed == null
+        ? null
+        : !subscribed
+            ? 'Free'
+            : store.isExpired
+                ? 'Expired'
+                : (days != null && days <= 3)
+                    ? 'About to end'
+                    : 'Active';
+    final statusColor = switch (status) {
+      'Active' => AppColors.green,
+      'Expired' => AppColors.red,
+      'About to end' => AppColors.orange,
+      _ => AppColors.secondaryLabel,
+    };
+    final planRows = <(String, String)>[
+      if (store.enrollmentDate != null)
+        ('Enrolled', dateFmt.format(store.enrollmentDate!)),
+      if (store.expirationDate != null)
+        (
+          store.isExpired ? 'Expired on' : 'Valid until',
+          dateFmt.format(store.expirationDate!)
+        ),
+      if (days != null) ('Days remaining', '$days'),
+    ];
+
     return ColoredBox(
       color: AppColors.canvas,
       child: CustomScrollView(slivers: [
@@ -20,214 +75,116 @@ class ProfileScreen extends StatelessWidget {
           largeTitle: const Text('You'),
           border: null,
           backgroundColor: AppColors.canvas,
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CupertinoButton(
-                padding: EdgeInsets.zero,
-                onPressed: () => showAccountSwitcher(context, store),
-                child: const Icon(
-                  CupertinoIcons.person_2_fill,
-                  color: AppColors.indigo,
-                  size: 22,
-                ),
-              ),
-              ThemeToggleButton(
-                isDark: store.darkMode,
-                onToggle: () => store.toggleDarkMode(),
-              ),
-            ],
-          ),
+          trailing: ThemeToggleButton(
+              isDark: store.darkMode, onToggle: store.toggleDarkMode),
         ),
         SliverPadding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
               IosCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(p.name,
+                    Text(store.displayName ?? store.email ?? 'AR Typing',
                         style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w800,
                             color: AppColors.label)),
-                    const SizedBox(height: 2),
-                    Text(p.handle,
-                        style: TextStyle(color: AppColors.secondaryLabel)),
-                    if (store.activeAccount != null) ...[
-                      const SizedBox(height: 6),
-                      Text(store.activeAccount!.email,
-                          style: const TextStyle(
-                              fontSize: 13, color: AppColors.blue)),
-                    ],
+                    for (final row in profileRows) _kv(row.$1, row.$2),
+                    if (profileRows.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text('Profile details load on the next sync.',
+                            style: TextStyle(
+                                fontSize: 12, color: AppColors.secondaryLabel)),
+                      ),
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
+              _header('My Subscription'),
               IosCard(
-                child: Row(children: [
-                  StatTile(
-                      label: 'Best',
-                      value: store.bestNetWpm.toStringAsFixed(0),
-                      suffix: 'wpm'),
-                  StatTile(
-                      label: 'Sessions',
-                      value: '${store.sessions.length}',
-                      accent: AppColors.blue),
-                  StatTile(
-                      label: 'Streak',
-                      value: '${store.streak}',
-                      accent: AppColors.orange),
-                ]),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                        child: Text(store.planName ?? '—',
+                            style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.label)),
+                      ),
+                      if (status != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: statusColor.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(status,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: statusColor)),
+                        ),
+                    ]),
+                    for (final row in planRows) _kv(row.$1, row.$2),
+                  ],
+                ),
               ),
-              const SizedBox(height: 16),
-              Text('Accounts',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.secondaryLabel)),
-              const SizedBox(height: 8),
+              _header('Accounts'),
               IosCard(
                 onTap: () => showAccountSwitcher(context, store),
                 child: Row(children: [
-                  const Icon(CupertinoIcons.person_2,
-                      color: AppColors.indigo, size: 22),
+                  const Icon(CupertinoIcons.person_2, color: AppColors.indigo),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          store.accounts.isEmpty
-                              ? 'No AR accounts'
-                              : '${store.accounts.length} account${store.accounts.length == 1 ? '' : 's'}',
-                          style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.label),
-                        ),
-                        Text(
-                          store.activeAccount != null
-                              ? 'Active: ${store.activeAccount!.displayName}'
-                              : 'Add an AR Typing login',
-                          style: TextStyle(
-                              fontSize: 12, color: AppColors.secondaryLabel),
-                        ),
-                      ],
+                    child: Text(
+                      '${store.accounts.length} account'
+                      '${store.accounts.length == 1 ? '' : 's'} on this device',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600, color: AppColors.label),
                     ),
                   ),
                   Icon(CupertinoIcons.chevron_right,
                       size: 16, color: AppColors.tertiaryLabel),
                 ]),
               ),
-              const SizedBox(height: 16),
-              Text('AR Typing',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.secondaryLabel)),
-              const SizedBox(height: 8),
+              _header('Sync'),
               IosCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(children: [
-                      Icon(
-                        store.arConnected
-                            ? CupertinoIcons.checkmark_seal_fill
-                            : CupertinoIcons.cloud,
-                        color: store.arConnected
-                            ? AppColors.green
-                            : AppColors.secondaryLabel,
-                      ),
-                      const SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          store.arConnected ? 'Connected' : 'Not connected',
-                          style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: AppColors.label),
+                          store.lastSyncedAt == null
+                              ? 'Not synced yet'
+                              : 'Last synced ${DateFormat('d MMM, HH:mm').format(store.lastSyncedAt!)}',
+                          style: TextStyle(color: AppColors.label),
                         ),
                       ),
-                      if (store.arSyncing) const CupertinoActivityIndicator(),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        onPressed: store.syncing ? null : store.manualRefresh,
+                        child: store.syncing
+                            ? const CupertinoActivityIndicator()
+                            : const Text('Sync now'),
+                      ),
                     ]),
-                    if (store.arConnected && store.arPlanTitle != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        'Plan: ${store.arPlanTitle}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: store.arSubscribed == false
-                              ? AppColors.orange
-                              : AppColors.green,
-                        ),
-                      ),
-                    ],
-                    if (store.arStatusMessage != null) ...[
-                      const SizedBox(height: 8),
-                      Text(store.arStatusMessage!,
+                    if (store.statusMessage != null)
+                      Text(store.statusMessage!,
                           style: TextStyle(
                               fontSize: 12, color: AppColors.secondaryLabel)),
-                    ],
-                    if (store.arError != null) ...[
-                      const SizedBox(height: 8),
-                      Text(store.arError!,
-                          style:
-                              const TextStyle(fontSize: 12, color: AppColors.red)),
-                    ],
-                    const SizedBox(height: 12),
-                    if (!store.arConnected)
-                      SizedBox(
-                        width: double.infinity,
-                        child: CupertinoButton.filled(
-                          onPressed: store.arSyncing
-                              ? null
-                              : () => showArLoginSheet(context, store),
-                          child: Text(store.accounts.isEmpty
-                              ? 'Sign in to AR Typing'
-                              : 'Re-authenticate / Add account'),
-                        ),
-                      )
-                    else ...[
-                      Row(children: [
-                        Expanded(
-                          child: CupertinoButton.filled(
-                            onPressed: store.arSyncing
-                                ? null
-                                : () => store.syncArHistory(),
-                            child: const Text('Sync History'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        CupertinoButton(
-                          onPressed: store.arSyncing
-                              ? null
-                              : () => store.arLogout(),
-                          child: const Text('Logout',
-                              style: TextStyle(color: AppColors.red)),
-                        ),
-                      ]),
-                      Text(
-                        '${store.arSessionCount} AR workouts on device',
-                        style: TextStyle(
-                            fontSize: 12, color: AppColors.secondaryLabel),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text('Background sync',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.secondaryLabel)),
-              const SizedBox(height: 8),
-              IosCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                    if (store.error != null)
+                      Text(store.error!,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.red)),
+                    const SizedBox(height: 10),
+                    Container(height: 0.5, color: AppColors.separator),
+                    const SizedBox(height: 10),
                     Row(children: [
                       Expanded(
                         child: Column(
@@ -235,13 +192,13 @@ class ProfileScreen extends StatelessWidget {
                           children: [
                             Text('Keep syncing in background',
                                 style: TextStyle(
-                                    fontWeight: FontWeight.w700,
+                                    fontWeight: FontWeight.w600,
                                     color: AppColors.label)),
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 2),
                             Text(
-                              store.backgroundSyncEnabled
-                                  ? 'Foreground service on — ~30s polls with “TypePulse is syncing” notification. Workmanager also runs ~every 15 min (Android OS minimum).'
-                                  : 'Off: foreground 30s timer only + Workmanager ~15 min when signed in. Turn on for continuous background/kill-resistant sync.',
+                              'Checks for new results about every 30 s with an '
+                              'ongoing notification. Off: every ~15 min '
+                              '(Android minimum).',
                               style: TextStyle(
                                   fontSize: 12,
                                   color: AppColors.secondaryLabel),
@@ -252,77 +209,17 @@ class ProfileScreen extends StatelessWidget {
                       CupertinoSwitch(
                         value: store.backgroundSyncEnabled,
                         activeTrackColor: AppColors.indigo,
-                        onChanged: store.arConnected
-                            ? (v) => store.setBackgroundSyncEnabled(v)
-                            : null,
+                        onChanged: store.setBackgroundSyncEnabled,
                       ),
                     ]),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-              Text('Goals',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.secondaryLabel)),
-              const SizedBox(height: 8),
-              IosCard(
-                onTap: () => _editInt(
-                  context,
-                  title: 'Daily goal (minutes)',
-                  value: p.dailyGoalMinutes,
-                  min: 5,
-                  max: 120,
-                  onSave: (v) =>
-                      store.updateProfile(p.copyWith(dailyGoalMinutes: v)),
-                ),
-                child: Row(children: [
-                  Text('Daily goal', style: TextStyle(color: AppColors.label)),
-                  const Spacer(),
-                  Text('${p.dailyGoalMinutes} min',
-                      style: TextStyle(color: AppColors.secondaryLabel)),
-                  Icon(CupertinoIcons.chevron_right,
-                      size: 16, color: AppColors.tertiaryLabel),
-                ]),
-              ),
-              const SizedBox(height: 8),
-              IosCard(
-                onTap: () => _editInt(
-                  context,
-                  title: 'Target WPM',
-                  value: p.targetWpm,
-                  min: 15,
-                  max: 80,
-                  onSave: (v) =>
-                      store.updateProfile(p.copyWith(targetWpm: v)),
-                ),
-                child: Row(children: [
-                  Text('Target WPM', style: TextStyle(color: AppColors.label)),
-                  const Spacer(),
-                  Text('${p.targetWpm}',
-                      style: TextStyle(color: AppColors.secondaryLabel)),
-                  Icon(CupertinoIcons.chevron_right,
-                      size: 16, color: AppColors.tertiaryLabel),
-                ]),
-              ),
-              const SizedBox(height: 8),
-              IosCard(
-                onTap: () => store.updateProfile(
-                  p.copyWith(
-                      languagePref: p.languagePref == 'hi' ? 'en' : 'hi'),
-                ),
-                child: Text(
-                  'Practice language: ${p.languagePref == 'hi' ? 'Hindi' : 'English'}',
-                  style: TextStyle(color: AppColors.label),
-                ),
-              ),
               const SizedBox(height: 24),
-              Text(
-                'Multi-account · FG 30s · Workmanager ~15m · optional FGS · notifications',
-                textAlign: TextAlign.center,
-                style:
-                    TextStyle(fontSize: 11, color: AppColors.secondaryLabel),
+              CupertinoButton(
+                onPressed: store.syncing ? null : () => _confirmLogout(context),
+                child: const Text('Sign out',
+                    style: TextStyle(color: AppColors.red)),
               ),
             ]),
           ),
@@ -331,52 +228,56 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  void _editInt(
-    BuildContext context, {
-    required String title,
-    required int value,
-    required int min,
-    required int max,
-    required ValueChanged<int> onSave,
-  }) {
-    var current = value.clamp(min, max);
-    showCupertinoModalPopup<void>(
+  Widget _header(String t) => Padding(
+        padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
+        child: Text(t,
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.secondaryLabel)),
+      );
+
+  Widget _kv(String k, String v) => Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 110,
+              child: Text(k,
+                  style:
+                      TextStyle(fontSize: 13, color: AppColors.secondaryLabel)),
+            ),
+            Expanded(
+              child: Text(v,
+                  style: TextStyle(fontSize: 13, color: AppColors.label)),
+            ),
+          ],
+        ),
+      );
+
+  void _confirmLogout(BuildContext context) {
+    showCupertinoDialog<void>(
       context: context,
-      builder: (ctx) => Container(
-        height: 280,
-        color: AppColors.card,
-        child: Column(children: [
-          Row(children: [
-            CupertinoButton(
-                child: const Text('Cancel'),
-                onPressed: () => Navigator.pop(ctx)),
-            const Spacer(),
-            CupertinoButton(
-              child: const Text('Save'),
-              onPressed: () {
-                onSave(current);
-                Navigator.pop(ctx);
-              },
-            ),
-          ]),
-          Text(title,
-              style:
-                  TextStyle(fontWeight: FontWeight.w600, color: AppColors.label)),
-          Expanded(
-            child: CupertinoPicker(
-              itemExtent: 36,
-              scrollController:
-                  FixedExtentScrollController(initialItem: current - min),
-              onSelectedItemChanged: (i) => current = min + i,
-              children: [
-                for (var i = min; i <= max; i++)
-                  Center(
-                      child:
-                          Text('$i', style: TextStyle(color: AppColors.label))),
-              ],
-            ),
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Sign out?'),
+        content: Text('You will need your AR Typing password to sign in '
+            'again as ${store.email ?? 'this account'}.'),
+        actions: [
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
-        ]),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () {
+              Navigator.pop(ctx);
+              store.logout();
+            },
+            child: const Text('Sign out'),
+          ),
+        ],
       ),
     );
   }
