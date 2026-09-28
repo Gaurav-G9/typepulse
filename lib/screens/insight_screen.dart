@@ -9,7 +9,6 @@ import '../models/typing_insight.dart';
 import '../theme/app_colors.dart';
 import '../widgets/ios_card.dart';
 import '../widgets/store_rebuild.dart';
-import 'ar_login_sheet.dart';
 
 /// AR Typing member-area "Typing Progress Insight" for a chosen interval.
 class InsightScreen extends StatefulWidget {
@@ -41,7 +40,7 @@ class _InsightScreenState extends State<InsightScreen>
   }
 
   Future<void> _load({bool force = false}) async {
-    if (!widget.store.arConnected) return;
+    if (widget.store.needsLogin) return;
     final req = ++_request;
     setState(() {
       loading = true;
@@ -75,7 +74,7 @@ class _InsightScreenState extends State<InsightScreen>
             Text('Typing Insight', style: TextStyle(color: AppColors.label)),
         backgroundColor: AppColors.navBar,
         border: null,
-        trailing: store.arConnected
+        trailing: !store.needsLogin
             ? CupertinoButton(
                 padding: EdgeInsets.zero,
                 onPressed: loading ? null : () => _load(force: true),
@@ -88,9 +87,7 @@ class _InsightScreenState extends State<InsightScreen>
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           children: [
-            if (!store.arConnected)
-              _signInPrompt(context)
-            else ...[
+            ...[
               SizedBox(
                 width: double.infinity,
                 child: CupertinoSlidingSegmentedControl<int>(
@@ -233,18 +230,6 @@ class _InsightScreenState extends State<InsightScreen>
       const SizedBox(height: 8),
       _words('Most deleted words / chars', i.deleted, AppColors.red),
     ];
-  }
-
-  Widget _signInPrompt(BuildContext context) {
-    return Column(children: [
-      _message(CupertinoIcons.cloud,
-          'Typing Insight comes from your AR Typing member area.\nSign in to see it here.'),
-      const SizedBox(height: 12),
-      CupertinoButton.filled(
-        onPressed: () => showArLoginSheet(context, widget.store),
-        child: const Text('Sign in to AR Typing'),
-      ),
-    ]);
   }
 
   Widget _message(IconData icon, String text) {

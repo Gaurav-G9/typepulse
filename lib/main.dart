@@ -2,10 +2,11 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 
 import 'data/store.dart';
-import 'screens/home_screen.dart';
-import 'screens/leaderboard_screen.dart';
-import 'screens/live_screen.dart';
+import 'screens/history_screen.dart';
+import 'screens/insight_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/summary_screen.dart';
+import 'screens/welcome_screen.dart';
 import 'services/background_bootstrap.dart';
 import 'theme/app_colors.dart';
 
@@ -20,7 +21,9 @@ Future<void> main() async {
 }
 
 class TypePulseApp extends StatefulWidget {
-  const TypePulseApp({super.key});
+  /// Injectable for tests; the app creates its own otherwise.
+  final AppStore? store;
+  const TypePulseApp({super.key, this.store});
 
   @override
   State<TypePulseApp> createState() => _TypePulseAppState();
@@ -28,7 +31,7 @@ class TypePulseApp extends StatefulWidget {
 
 class _TypePulseAppState extends State<TypePulseApp>
     with WidgetsBindingObserver {
-  final store = AppStore();
+  late final AppStore store = widget.store ?? AppStore();
 
   @override
   void initState() {
@@ -73,23 +76,41 @@ class _TypePulseAppState extends State<TypePulseApp>
       title: 'TypePulse',
       debugShowCheckedModeBanner: false,
       theme: AppColors.cupertinoTheme(),
-      home: store.loaded
-          ? RootTabs(store: store)
-          : CupertinoPageScaffold(
-              backgroundColor: AppColors.background,
+      home: !store.loaded
+          ? CupertinoPageScaffold(
+              backgroundColor: AppColors.canvas,
               child: const Center(child: CupertinoActivityIndicator()),
-            ),
+            )
+          // First launch (or signed out): welcome + AR Typing sign-in.
+          : store.needsLogin
+              ? WelcomeScreen(store: store)
+              : RootTabs(key: ValueKey(store.activeAccountId), store: store),
     );
   }
 }
 
-class RootTabs extends StatelessWidget {
+class RootTabs extends StatefulWidget {
   final AppStore store;
   const RootTabs({super.key, required this.store});
 
   @override
+  State<RootTabs> createState() => _RootTabsState();
+}
+
+class _RootTabsState extends State<RootTabs> {
+  final controller = CupertinoTabController();
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final store = widget.store;
     return CupertinoTabScaffold(
+      controller: controller,
       tabBar: CupertinoTabBar(
         backgroundColor: AppColors.tabBar,
         activeColor: AppColors.indigo,
@@ -102,13 +123,13 @@ class RootTabs extends StatelessWidget {
             label: 'Summary',
           ),
           BottomNavigationBarItem(
-            icon: Icon(CupertinoIcons.dot_radiowaves_left_right),
-            label: 'Live',
+            icon: Icon(CupertinoIcons.list_bullet),
+            label: 'History',
           ),
           BottomNavigationBarItem(
             icon: Icon(CupertinoIcons.chart_bar),
             activeIcon: Icon(CupertinoIcons.chart_bar_fill),
-            label: 'Ranks',
+            label: 'Insight',
           ),
           BottomNavigationBarItem(
             icon: Icon(CupertinoIcons.person),
@@ -128,27 +149,16 @@ class RootTabs extends StatelessWidget {
             );
         switch (index) {
           case 1:
-            return listen((_) => LiveLobbyScreen(store: store));
+            return listen((_) => HistoryScreen(store: store));
           case 2:
-            return listen((_) => LeaderboardScreen(store: store));
+            return listen((_) => InsightScreen(store: store));
           case 3:
             return listen((_) => ProfileScreen(store: store));
           default:
-            return listen(
-              (ctx) => HomeScreen(
-                store: store,
-                onOpenLive: () {
-                  Navigator.of(ctx).push(
-                    CupertinoPageRoute(
-                      builder: (_) => ListenableBuilder(
-                        listenable: store,
-                        builder: (_, __) => LiveLobbyScreen(store: store),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            );
+            return listen((_) => SummaryScreen(
+                  store: store,
+                  onOpenHistory: () => controller.index = 1,
+                ));
         }
       },
     );
