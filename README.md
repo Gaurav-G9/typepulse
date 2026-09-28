@@ -59,6 +59,25 @@ Toggle path: **You → Keep syncing in background** (requires an AR account sign
 
 Background isolates load the active account JWT from secure storage, call `typedPassages` + `memberTypingStats`, detect new session ids, show a local notification, and persist to the same SharedPreferences keys as the in-app `AppStore`.
 
+## Download the APK (GitHub Actions)
+
+Every push runs **Actions → Build APK**: analyze → tests → release APK.
+
+1. Open the repo's **Actions** tab → latest **Build APK** run → **Artifacts** → download `TypePulse-v…apk` (it's zipped by GitHub; unzip, then install on the phone — allow "Install unknown apps").
+2. Run it manually any time: **Actions → Build APK → Run workflow**.
+3. Push a tag like `v1.3.0` to also attach the APK to a **GitHub Release**.
+
+**Updating over an older install:** Android only accepts an update signed with the same key. Without secrets, CI signs with a temporary debug key, so you may need to uninstall first. To sign consistently, create a keystore once:
+
+```bash
+keytool -genkeypair -v -keystore upload.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 upload.jks   # copy the output
+```
+
+and add repository secrets (**Settings → Secrets and variables → Actions**): `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`upload`), `ANDROID_KEY_PASSWORD`. Keep `upload.jks` safe — losing it means users must reinstall.
+
+Toolchain: Flutter 3.47.5 · Gradle 8.14.3 · AGP 8.13.0 · Kotlin 2.2.20 · Java 17.
+
 ## Run
 
 ```bash
