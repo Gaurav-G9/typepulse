@@ -42,6 +42,7 @@ class ArTypingApi {
   ArTypingApi({
     FlutterSecureStorage? secure,
     http.Client? httpClient,
+    this.insightTimeout = const Duration(seconds: 60),
   })  : _secure = secure ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(encryptedSharedPreferences: true),
@@ -244,10 +245,10 @@ class ArTypingApi {
     await clearSession();
   }
 
-  Future<http.Response> _authedGet(Uri uri) async {
+  Future<http.Response> _authedGet(Uri uri, {Duration? timeout}) async {
+    final limit = timeout ?? requestTimeout;
     final sentWith = accessToken;
-    var res =
-        await _http.get(uri, headers: _authHeaders).timeout(requestTimeout);
+    var res = await _http.get(uri, headers: _authHeaders).timeout(limit);
     if (res.statusCode == 401) {
       // Another request may already have refreshed the token.
       final outcome = accessToken != sentWith && accessToken != null
@@ -255,9 +256,7 @@ class ArTypingApi {
           : await _refresh();
       switch (outcome) {
         case _RefreshOutcome.ok:
-          res = await _http
-              .get(uri, headers: _authHeaders)
-              .timeout(requestTimeout);
+          res = await _http.get(uri, headers: _authHeaders).timeout(limit);
         case _RefreshOutcome.rejected:
           throw ArApiException(
             'Session expired. Sign in again.',
@@ -411,27 +410,80 @@ class ArTypingApi {
     return null;
   }
 
+  /// Typing Insight is computed on the server on request (the website caches
+  /// it for 12 h and never retries), so it gets a longer timeout.
+  final Duration insightTimeout;
+
   /// Member-area "Typing Insight" for the last [days] days (1/2/7/15/30).
   /// Returns null when there's no activity in that window (API 404).
+  /// A timeout or 5xx (e.g. the Heroku dyno waking up) is retried once.
   Future<Map<String, dynamic>?> fetchTypingProgress(int days) async {
     if (!isLoggedIn) throw ArApiException('Not logged in', statusCode: 401);
-    final res = await _authedGet(
-      Uri.parse('$baseUrl/learning/typing-progress/')
-          .replace(queryParameters: {'days': '$days'}),
-    );
-    if (res.statusCode == 404) return null;
-    if (res.statusCode == 403) {
+    final uri = Uri.parse('$baseUrl/learning/typing-progress/')
+        .replace(queryParameters: {'days': '$days'});
+    http.Response? res;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final last = attempt == 1;
+      try {
+        res = await _authedGet(uri, timeout: insightTimeout);
+      } on TimeoutException {
+        if (last) {
+          throw ArApiException(
+            'AR Typing took too long to prepare your Typing Insight. '
+            'Try again, or pick a shorter interval.',
+          );
+        }
+        continue;
+      } on ArApiException {
+        rethrow;
+      } catch (_) {
+        if (last) {
+          throw ArApiException(
+              'Could not reach AR Typing. Check your internet connection.');
+        }
+        continue;
+      }
+      if (res.statusCode >= 500 && !last) continue;
+      break;
+    }
+    final r = res!;
+    if (r.statusCode == 404) return null;
+    if (r.statusCode == 403) {
+      final detail = _errorDetail(r);
       throw ArApiException(
-        'Typing Insight is not available on your current AR Typing plan.',
+        detail.startsWith('Request failed')
+            ? 'Typing Insight is not available on your current AR Typing plan.'
+            : detail,
         statusCode: 403,
         freeMode: true,
       );
     }
-    if (res.statusCode != 200) {
-      throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
+    if (r.statusCode >= 500) {
+      throw ArApiException(
+        'AR Typing server error while preparing Typing Insight '
+        '(HTTP ${r.statusCode}). Try again later.',
+        statusCode: r.statusCode,
+      );
     }
-    final body = _tryDecode(res.body);
-    return body is Map<String, dynamic> ? body : null;
+    if (r.statusCode != 200) {
+      throw ArApiException('${_errorDetail(r)} (HTTP ${r.statusCode})',
+          statusCode: r.statusCode);
+    }
+    final body = _tryDecode(r.body);
+    if (body is! Map<String, dynamic>) {
+      throw ArApiException('Unexpected Typing Insight response from AR Typing.',
+          statusCode: r.statusCode);
+    }
+    // A 200 carrying only a message (no insight fields) means "no activity".
+    const fields = [
+      'passage_count',
+      'avg_gross_speed',
+      'avg_net_speed',
+      'best_gross_speed_data',
+      'best_net_speed_data',
+    ];
+    if (!fields.any(body.containsKey)) return null;
+    return body;
   }
 
   /// Account + subscription (`/users/me/`): name, email, `is_subscribed`,

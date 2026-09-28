@@ -28,6 +28,65 @@ void main() {
       expect(await api.fetchTypingProgress(7), isNull);
     });
 
+    ArTypingApi insightApi(Future<http.Response> Function(int call) respond,
+        {Duration timeout = const Duration(seconds: 60)}) {
+      var calls = 0;
+      return ArTypingApi(
+        insightTimeout: timeout,
+        httpClient: MockClient((req) => respond(++calls)),
+      )
+        ..accountId = 'me'
+        ..accessToken = 'tok';
+    }
+
+    test('typing-progress: slow first response is retried', () async {
+      var calls = 0;
+      final api = insightApi((n) async {
+        calls = n;
+        if (n == 1) await Future<void>.delayed(const Duration(seconds: 1));
+        return json({'passage_count': 3, 'avg_gross_speed': 40});
+      }, timeout: const Duration(milliseconds: 200));
+      final body = await api.fetchTypingProgress(30);
+      expect(body?['passage_count'], 3);
+      expect(calls, 2);
+    });
+
+    test('typing-progress: 503 (dyno waking) is retried once', () async {
+      final api = insightApi((n) async => n == 1
+          ? http.Response('Application error', 503)
+          : json({'passage_count': 1}));
+      expect((await api.fetchTypingProgress(7))?['passage_count'], 1);
+    });
+
+    test('typing-progress: repeated timeouts give a clear message', () async {
+      final api = insightApi((n) async {
+        await Future<void>.delayed(const Duration(seconds: 1));
+        return json({});
+      }, timeout: const Duration(milliseconds: 100));
+      await expectLater(
+        api.fetchTypingProgress(30),
+        throwsA(isA<ArApiException>().having(
+            (e) => e.message, 'message', contains('took too long'))),
+      );
+    });
+
+    test('typing-progress: 403 shows the server reason', () async {
+      final api = insightApi((n) async =>
+          json({'detail': 'Subscribe to view typing insights.'}, 403));
+      await expectLater(
+        api.fetchTypingProgress(7),
+        throwsA(isA<ArApiException>().having((e) => e.message, 'message',
+            'Subscribe to view typing insights.')),
+      );
+    });
+
+    test('typing-progress: 200 with only a message means no activity',
+        () async {
+      final api = insightApi(
+          (n) async => json({'message': 'No typing data found.'}));
+      expect(await api.fetchTypingProgress(7), isNull);
+    });
+
     test('users/me is fetched with the JWT header', () async {
       final api = ArTypingApi(
         httpClient: MockClient((req) async {

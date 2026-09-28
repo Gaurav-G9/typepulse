@@ -56,12 +56,24 @@ class _InsightScreenState extends State<InsightScreen>
     } on ArApiException catch (e) {
       if (!mounted || req != _request) return;
       setState(() => error = e.message);
-    } catch (_) {
+    } catch (e) {
       if (!mounted || req != _request) return;
-      setState(() => error = 'Could not load insights. Check your connection.');
+      // Show what actually went wrong instead of a generic message.
+      setState(() => error = 'Could not load Typing Insight: $e');
     } finally {
       if (mounted && req == _request) setState(() => loading = false);
     }
+  }
+
+  /// Switch interval; never show the previous interval's numbers under it.
+  void _select(int d) {
+    setState(() {
+      days = d;
+      insight = null;
+      empty = false;
+      error = null;
+    });
+    _load();
   }
 
   @override
@@ -102,9 +114,7 @@ class _InsightScreenState extends State<InsightScreen>
                       ),
                   },
                   onValueChanged: (v) {
-                    if (v == null || v == days) return;
-                    setState(() => days = v);
-                    _load();
+                    if (v != null && v != days) _select(v);
                   },
                 ),
               ),
@@ -119,23 +129,60 @@ class _InsightScreenState extends State<InsightScreen>
 
   List<Widget> _body() {
     if (loading && insight == null) {
-      return const [
+      return [
         Padding(
-          padding: EdgeInsets.only(top: 60),
-          child: CupertinoActivityIndicator(radius: 14),
+          padding: const EdgeInsets.only(top: 60),
+          child: Column(children: [
+            const CupertinoActivityIndicator(radius: 14),
+            const SizedBox(height: 14),
+            Text(
+              'AR Typing is preparing your insight…\nThis can take up to a minute.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.secondaryLabel, height: 1.4),
+            ),
+          ]),
         ),
       ];
     }
     if (error != null) {
-      return [_message(CupertinoIcons.exclamationmark_triangle, error!)];
+      return [
+        _message(CupertinoIcons.exclamationmark_triangle, error!),
+        const SizedBox(height: 12),
+        Center(
+          child: CupertinoButton.filled(
+            onPressed: () => _load(force: true),
+            child: const Text('Try again'),
+          ),
+        ),
+      ];
     }
     if (empty || insight == null) {
+      final wider = intervals.where((d) => d > days).toList();
       return [
         _message(
           CupertinoIcons.chart_bar,
-          'No typing activity found for the last ${days == 1 ? 'day' : '$days days'}.\n'
-          'Try a longer interval or type a passage on AR Typing.',
+          'AR Typing has no typing activity for the last '
+          '${days == 1 ? 'day' : '$days days'}.',
         ),
+        if (wider.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final d in wider)
+                CupertinoButton(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  color: AppColors.fill,
+                  onPressed: () => _select(d),
+                  child: Text('Show last $d days',
+                      style: TextStyle(fontSize: 14, color: AppColors.label)),
+                ),
+            ],
+          ),
+        ],
       ];
     }
     final i = insight!;

@@ -383,7 +383,11 @@ class AppStore extends ChangeNotifier {
       if (profile != null) studentProfile = profile;
       if (stats != null) memberStats = stats;
       lastSyncedAt = DateTime.now();
-      _insightCache.clear();
+      // Insight is slow to compute server-side; only refetch it when the
+      // history actually changed (not on every 30-second sync).
+      final changed = parsed.length != previousIds.length ||
+          parsed.any((r) => !previousIds.contains(r.id));
+      if (changed) _insightCache.clear();
 
       final name = displayName;
       if (name != null) {
