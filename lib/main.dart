@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 
 import 'data/store.dart';
 import 'screens/history_screen.dart';
-import 'screens/insight_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/summary_screen.dart';
 import 'screens/welcome_screen.dart';
@@ -127,11 +126,6 @@ class _RootTabsState extends State<RootTabs> {
             label: 'History',
           ),
           BottomNavigationBarItem(
-            icon: Icon(CupertinoIcons.chart_bar),
-            activeIcon: Icon(CupertinoIcons.chart_bar_fill),
-            label: 'Insight',
-          ),
-          BottomNavigationBarItem(
             icon: Icon(CupertinoIcons.person),
             activeIcon: Icon(CupertinoIcons.person_fill),
             label: 'You',
@@ -151,8 +145,6 @@ class _RootTabsState extends State<RootTabs> {
           case 1:
             return listen((_) => HistoryScreen(store: store));
           case 2:
-            return listen((_) => InsightScreen(store: store));
-          case 3:
             return listen((_) => ProfileScreen(store: store));
           default:
             return listen((_) => SummaryScreen(

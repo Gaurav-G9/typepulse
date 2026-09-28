@@ -123,7 +123,7 @@ class _ResultDetailScreenState extends State<ResultDetailScreen>
             ),
             if (r.netWpm == null && r.date.isBefore(ArResult.legacyCutoff))
               Padding(
-                padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
+                padding: const EdgeInsets.only(top: 8),
                 child: Text(
                   'AR Typing did not store speeds for tests before '
                   '13 Mar 2025 (the website shows "See In Detail").',

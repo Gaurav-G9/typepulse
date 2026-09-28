@@ -1,5 +1,9 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:typepulse/data/ar_api.dart';
+import 'package:typepulse/data/store.dart';
 import 'package:typepulse/main.dart';
 
 import 'test_support.dart';
@@ -45,6 +49,35 @@ void main() {
     expect(find.text('41.26 wpm', findRichText: true),
         findsOneWidget); // Avg. Gross Speed
     expect(find.text('Hi, Asha Verma'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('session ended elsewhere → welcome explains why', (tester) async {
+    phoneSize(tester);
+    resetStorage(signedIn: true);
+    var kicked = false;
+    final store = AppStore(
+      api: ArTypingApi(
+        httpClient: MockClient((req) async {
+          if (kicked) {
+            if (req.url.path.endsWith('/jwt/refresh/')) {
+              return http.Response('{"detail":"Token is invalid"}', 401);
+            }
+            return http.Response('{"detail":"expired"}', 401);
+          }
+          return fakeArTyping().send(req).then(http.Response.fromStream);
+        }),
+      ),
+    );
+    await tester.pumpWidget(TypePulseApp(store: store));
+    await settle(tester);
+    expect(find.text('Summary'), findsWidgets);
+
+    kicked = true; // user signs in on another device
+    await tester.runAsync(() => store.syncNow(quiet: true));
+    await settle(tester);
+    expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.textContaining('another device'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 }

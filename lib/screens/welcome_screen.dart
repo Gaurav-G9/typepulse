@@ -19,16 +19,20 @@ class WelcomeScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: AppColors.indigo,
-                borderRadius: BorderRadius.circular(16),
+            // ListView stretches children to full width; keep the logo square.
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                width: 64,
+                height: 64,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.indigo,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(CupertinoIcons.keyboard,
+                    color: CupertinoColors.white, size: 34),
               ),
-              child: const Icon(CupertinoIcons.keyboard,
-                  color: CupertinoColors.white, size: 34),
             ),
             const SizedBox(height: 20),
             Text(
@@ -42,11 +46,11 @@ class WelcomeScreen extends StatelessWidget {
             Text(
               returning == null
                   ? 'Your AR Typing Platform results on your phone — typing '
-                      'history, speeds, accuracy and insights, straight from '
+                      'history, speeds and accuracy, straight from '
                       'your artypingplatform.com member area.\n\n'
                       'Sign in with your AR Typing email and password.'
-                  : 'Your session for ${returning.email} has ended. '
-                      'Sign in again to keep syncing.',
+                  : '${store.sessionEndedReason ?? 'You are signed out.'}'
+                      '\n\nAccount: ${returning.email}',
               style: TextStyle(
                   fontSize: 15, height: 1.4, color: AppColors.secondaryLabel),
             ),

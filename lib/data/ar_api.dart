@@ -42,7 +42,6 @@ class ArTypingApi {
   ArTypingApi({
     FlutterSecureStorage? secure,
     http.Client? httpClient,
-    this.insightTimeout = const Duration(seconds: 60),
   })  : _secure = secure ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(encryptedSharedPreferences: true),
@@ -109,6 +108,28 @@ class ArTypingApi {
     } else {
       await _secure.delete(key: _refreshKey(id));
     }
+  }
+
+  /// Shown when AR Typing stops accepting this device's sign-in.
+  static const sessionEndedMessage =
+      'AR Typing ended this sign-in — usually because the same account '
+      'signed in on another device or browser. Sign in again to keep syncing.';
+
+  /// Adopt tokens another isolate (Workmanager / background service) has
+  /// refreshed and saved since we loaded ours. Returns true if they changed.
+  Future<bool> _adoptStoredTokens() async {
+    final id = accountId;
+    if (id == null) return false;
+    try {
+      final access = await _secure.read(key: _accessKey(id));
+      final refresh = await _secure.read(key: _refreshKey(id));
+      if (access != null && access.isNotEmpty && access != accessToken) {
+        accessToken = access;
+        refreshToken = refresh;
+        return true;
+      }
+    } catch (_) {}
+    return false;
   }
 
   Future<void> clearSession() async {
@@ -189,9 +210,15 @@ class ArTypingApi {
   }
 
   Future<_RefreshOutcome> _doRefresh() async {
+    // The app and its background sync run in separate isolates with their
+    // own copy of the tokens. If the other one already refreshed (and the
+    // server rotated the refresh token), use its newer tokens instead of
+    // spending our stale refresh token — which would be rejected.
+    if (await _adoptStoredTokens()) return _RefreshOutcome.ok;
     if (refreshToken == null || refreshToken!.isEmpty) {
       return _RefreshOutcome.rejected;
     }
+    final sentRefresh = refreshToken;
     final http.Response res;
     try {
       res = await _http
@@ -220,7 +247,11 @@ class ArTypingApi {
       return _RefreshOutcome.ok;
     }
     if (res.statusCode == 400 || res.statusCode == 401) {
-      // Refresh token expired/blacklisted — clear so UI can re-auth.
+      // Another isolate may have rotated the token while we were asking.
+      if (await _adoptStoredTokens() && refreshToken != sentRefresh) {
+        return _RefreshOutcome.ok;
+      }
+      // Refresh token expired/blacklisted — clear so the UI asks to sign in.
       await clearSession();
       return _RefreshOutcome.rejected;
     }
@@ -257,9 +288,20 @@ class ArTypingApi {
       switch (outcome) {
         case _RefreshOutcome.ok:
           res = await _http.get(uri, headers: _authHeaders).timeout(limit);
+          if (res.statusCode == 401) {
+            // Even a freshly refreshed token is refused: the server has ended
+            // this session (e.g. the account signed in elsewhere). Don't keep
+            // failing silently on every sync — ask the user to sign in again.
+            await clearSession();
+            throw ArApiException(
+              sessionEndedMessage,
+              statusCode: 401,
+              needsReauth: true,
+            );
+          }
         case _RefreshOutcome.rejected:
           throw ArApiException(
-            'Session expired. Sign in again.',
+            sessionEndedMessage,
             statusCode: 401,
             needsReauth: true,
           );
@@ -374,7 +416,7 @@ class ArTypingApi {
     );
     if (res.statusCode == 403) {
       throw ArApiException(
-        'Profile insights gated on Free Mode.',
+        'Your profile is not available on your current AR Typing plan.',
         statusCode: 403,
         freeMode: true,
       );
@@ -397,7 +439,7 @@ class ArTypingApi {
     );
     if (res.statusCode == 403) {
       throw ArApiException(
-        'Typing insights are locked on Free Mode. Local Summary still works.',
+        'Member stats are not available on your current AR Typing plan.',
         statusCode: 403,
         freeMode: true,
       );
@@ -408,82 +450,6 @@ class ArTypingApi {
     final body = _tryDecode(res.body);
     if (body is Map<String, dynamic>) return body;
     return null;
-  }
-
-  /// Typing Insight is computed on the server on request (the website caches
-  /// it for 12 h and never retries), so it gets a longer timeout.
-  final Duration insightTimeout;
-
-  /// Member-area "Typing Insight" for the last [days] days (1/2/7/15/30).
-  /// Returns null when there's no activity in that window (API 404).
-  /// A timeout or 5xx (e.g. the Heroku dyno waking up) is retried once.
-  Future<Map<String, dynamic>?> fetchTypingProgress(int days) async {
-    if (!isLoggedIn) throw ArApiException('Not logged in', statusCode: 401);
-    final uri = Uri.parse('$baseUrl/learning/typing-progress/')
-        .replace(queryParameters: {'days': '$days'});
-    http.Response? res;
-    for (var attempt = 0; attempt < 2; attempt++) {
-      final last = attempt == 1;
-      try {
-        res = await _authedGet(uri, timeout: insightTimeout);
-      } on TimeoutException {
-        if (last) {
-          throw ArApiException(
-            'AR Typing took too long to prepare your Typing Insight. '
-            'Try again, or pick a shorter interval.',
-          );
-        }
-        continue;
-      } on ArApiException {
-        rethrow;
-      } catch (_) {
-        if (last) {
-          throw ArApiException(
-              'Could not reach AR Typing. Check your internet connection.');
-        }
-        continue;
-      }
-      if (res.statusCode >= 500 && !last) continue;
-      break;
-    }
-    final r = res!;
-    if (r.statusCode == 404) return null;
-    if (r.statusCode == 403) {
-      final detail = _errorDetail(r);
-      throw ArApiException(
-        detail.startsWith('Request failed')
-            ? 'Typing Insight is not available on your current AR Typing plan.'
-            : detail,
-        statusCode: 403,
-        freeMode: true,
-      );
-    }
-    if (r.statusCode >= 500) {
-      throw ArApiException(
-        'AR Typing server error while preparing Typing Insight '
-        '(HTTP ${r.statusCode}). Try again later.',
-        statusCode: r.statusCode,
-      );
-    }
-    if (r.statusCode != 200) {
-      throw ArApiException('${_errorDetail(r)} (HTTP ${r.statusCode})',
-          statusCode: r.statusCode);
-    }
-    final body = _tryDecode(r.body);
-    if (body is! Map<String, dynamic>) {
-      throw ArApiException('Unexpected Typing Insight response from AR Typing.',
-          statusCode: r.statusCode);
-    }
-    // A 200 carrying only a message (no insight fields) means "no activity".
-    const fields = [
-      'passage_count',
-      'avg_gross_speed',
-      'avg_net_speed',
-      'best_gross_speed_data',
-      'best_net_speed_data',
-    ];
-    if (!fields.any(body.containsKey)) return null;
-    return body;
   }
 
   /// Account + subscription (`/users/me/`): name, email, `is_subscribed`,

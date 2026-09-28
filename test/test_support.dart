@@ -75,34 +75,6 @@ MockClient fakeArTyping({int results = 12}) => MockClient((req) async {
           'state': 'Uttar Pradesh',
           'address': '12 Long Street Name, Some Colony, Near The Big Market',
         };
-      } else if (path.endsWith('/typing-progress/')) {
-        body = {
-          'passage_count': 12,
-          'min_achieved_count': 8,
-          'avg_gross_speed': 41.25,
-          'avg_net_speed': 39.8,
-          'best_gross_speed_data': {
-            'gross_speed': 48.2,
-            'corresponding_net_speed': 47.1
-          },
-          'best_net_speed_data': {
-            'net_speed': 47.5,
-            'corresponding_gross_speed': 48.0
-          },
-          'best_gross_speed_list': List.generate(30, (i) => 35.0 + i % 9),
-          'best_net_speed_list': List.generate(30, (i) => 33.0 + i % 7),
-          'min_achieved_count_list': List.generate(30, (i) => i % 4),
-          'exam_title': 'UPSSSC Assistant English Typing Test, SSC CHSL',
-          'target_speed': '30,35',
-          'time_duration': '10:00,15:00',
-          'typing_dates': '2026-09-20,2026-09-21',
-          'most_misspelled_words': {
-            for (var i = 0; i < 40; i++)
-              'misspeltword$i': {'correct': 'word$i', 'count': i}
-          },
-          'most_added_words': {'the': 4},
-          'most_deleted_words': {},
-        };
       } else {
         body = {};
         status = 404;

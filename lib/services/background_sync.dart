@@ -25,6 +25,24 @@ class BackgroundSync {
   static String remoteProfileKey(String id) => 'tp_remote_profile_$id';
   static String syncedAtKey(String id) => 'tp_synced_at_$id';
 
+  /// Set when AR Typing ended this device's sign-in (read by the UI).
+  static String sessionEndedKey(String id) => 'tp_session_ended_$id';
+
+  /// Background isolates can't show the sign-in screen: record why and tell
+  /// the user once with a notification.
+  static Future<void> _sessionEnded(
+      SharedPreferences prefs, String accountId) async {
+    if (prefs.getBool(sessionEndedKey(accountId)) ?? false) return;
+    await prefs.setBool(sessionEndedKey(accountId), true);
+    try {
+      await NotificationService.instance.showNewResult(
+        title: 'Signed out of AR Typing',
+        body: 'This account signed in on another device. Open TypePulse and '
+            'sign in again to keep syncing.',
+      );
+    } catch (_) {}
+  }
+
   static const periodicUniqueName = 'typepulse-periodic-sync';
   static const periodicTaskName = 'typepulsePeriodicSync';
 
@@ -86,12 +104,18 @@ class BackgroundSync {
     try {
       stats = await api.fetchMemberStats();
     } on ArApiException catch (e) {
-      if (e.needsReauth) return 0;
+      if (e.needsReauth) {
+        await _sessionEnded(prefs, accountId);
+        return 0;
+      }
     } catch (_) {}
 
     final List<Map<String, dynamic>> rows;
     try {
       rows = await api.fetchAllHistory(maxPages: 15, pageSize: 100);
+    } on ArApiException catch (e) {
+      if (e.needsReauth) await _sessionEnded(prefs, accountId);
+      return 0;
     } catch (_) {
       return 0;
     }

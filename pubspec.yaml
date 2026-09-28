@@ -1,7 +1,7 @@
 name: typepulse
 description: AR Typing Platform companion — your typing history, speeds and insights from artypingplatform.com.
 publish_to: "none"
-version: 2.0.1+6
+version: 2.1.0+7
 
 environment:
   sdk: ">=3.6.0 <4.0.0"

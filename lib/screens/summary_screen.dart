@@ -61,14 +61,14 @@ class _SummaryScreenState extends State<SummaryScreen> {
             delegate: SliverChildListDelegate([
               if (store.displayName != null)
                 Padding(
-                  padding: const EdgeInsets.only(left: 4, bottom: 10),
+                  padding: const EdgeInsets.only(bottom: 12),
                   child: Text('Hi, ${store.displayName}',
                       style: TextStyle(
                           fontSize: 15, color: AppColors.secondaryLabel)),
                 ),
               if (store.error != null)
                 Padding(
-                  padding: const EdgeInsets.only(left: 4, bottom: 10),
+                  padding: const EdgeInsets.only(bottom: 12),
                   child: Text(store.error!,
                       style:
                           const TextStyle(fontSize: 13, color: AppColors.red)),
@@ -89,7 +89,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
               ]),
               const SizedBox(height: 8),
               IosCard(
-                padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
+                padding: const EdgeInsets.fromLTRB(8, 14, 8, 8),
                 child: Column(children: [
                   Row(children: [
                     const SizedBox(width: 8),
@@ -102,7 +102,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                 ]),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+                padding: const EdgeInsets.only(top: 6),
                 child: Text(
                   chart.isEmpty
                       ? ''

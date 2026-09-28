@@ -31,7 +31,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late int historyCalls;
-  late int insightCalls;
   late Completer<void>? gate;
   late List<Map<String, dynamic>> historyA;
 
@@ -76,10 +75,6 @@ void main() {
             'avg_accuracy_percentage': 97.5,
           });
         }
-        if (path.endsWith('/typing-progress/')) {
-          insightCalls++;
-          return json({'passage_count': 5, 'avg_gross_speed': 41.2});
-        }
         return json({}, 404);
       });
 
@@ -111,7 +106,6 @@ void main() {
 
   setUp(() {
     historyCalls = 0;
-    insightCalls = 0;
     gate = null;
     historyA = [row(2, '2026-09-21T10:00:00Z'), row(1, '2026-09-20T10:00:00Z')];
   });
@@ -237,17 +231,6 @@ void main() {
     expect(s.results, isEmpty);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('tp_history_a@x.com'), isNull);
-    s.dispose();
-  });
-
-  test('insight is cached until the next sync', () async {
-    final s = await store(prefs: twoAccounts, tokens: tokens);
-    expect((await s.loadInsight(7))!.passageCount, 5);
-    await s.loadInsight(7);
-    expect(insightCalls, 1);
-    await s.syncNow();
-    await s.loadInsight(7);
-    expect(insightCalls, 2);
     s.dispose();
   });
 

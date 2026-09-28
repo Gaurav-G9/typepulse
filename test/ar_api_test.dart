@@ -14,79 +14,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
-  group('insight + account', () {
-    test('typing-progress 404 means no activity', () async {
-      final api = ArTypingApi(
-        httpClient: MockClient((req) async {
-          expect(req.url.path, endsWith('/learning/typing-progress/'));
-          expect(req.url.queryParameters['days'], '7');
-          return json({'detail': 'Not found.'}, 404);
-        }),
-      )
-        ..accountId = 'me'
-        ..accessToken = 'tok';
-      expect(await api.fetchTypingProgress(7), isNull);
-    });
-
-    ArTypingApi insightApi(Future<http.Response> Function(int call) respond,
-        {Duration timeout = const Duration(seconds: 60)}) {
-      var calls = 0;
-      return ArTypingApi(
-        insightTimeout: timeout,
-        httpClient: MockClient((req) => respond(++calls)),
-      )
-        ..accountId = 'me'
-        ..accessToken = 'tok';
-    }
-
-    test('typing-progress: slow first response is retried', () async {
-      var calls = 0;
-      final api = insightApi((n) async {
-        calls = n;
-        if (n == 1) await Future<void>.delayed(const Duration(seconds: 1));
-        return json({'passage_count': 3, 'avg_gross_speed': 40});
-      }, timeout: const Duration(milliseconds: 200));
-      final body = await api.fetchTypingProgress(30);
-      expect(body?['passage_count'], 3);
-      expect(calls, 2);
-    });
-
-    test('typing-progress: 503 (dyno waking) is retried once', () async {
-      final api = insightApi((n) async => n == 1
-          ? http.Response('Application error', 503)
-          : json({'passage_count': 1}));
-      expect((await api.fetchTypingProgress(7))?['passage_count'], 1);
-    });
-
-    test('typing-progress: repeated timeouts give a clear message', () async {
-      final api = insightApi((n) async {
-        await Future<void>.delayed(const Duration(seconds: 1));
-        return json({});
-      }, timeout: const Duration(milliseconds: 100));
-      await expectLater(
-        api.fetchTypingProgress(30),
-        throwsA(isA<ArApiException>().having(
-            (e) => e.message, 'message', contains('took too long'))),
-      );
-    });
-
-    test('typing-progress: 403 shows the server reason', () async {
-      final api = insightApi((n) async =>
-          json({'detail': 'Subscribe to view typing insights.'}, 403));
-      await expectLater(
-        api.fetchTypingProgress(7),
-        throwsA(isA<ArApiException>().having((e) => e.message, 'message',
-            'Subscribe to view typing insights.')),
-      );
-    });
-
-    test('typing-progress: 200 with only a message means no activity',
-        () async {
-      final api = insightApi(
-          (n) async => json({'message': 'No typing data found.'}));
-      expect(await api.fetchTypingProgress(7), isNull);
-    });
-
+  group('account', () {
     test('users/me is fetched with the JWT header', () async {
       final api = ArTypingApi(
         httpClient: MockClient((req) async {
@@ -165,6 +93,46 @@ void main() {
         api.fetchProfile(),
         throwsA(isA<ArApiException>()
             .having((e) => e.needsReauth, 'needsReauth', isTrue)),
+      );
+      expect(api.isLoggedIn, isFalse);
+    });
+
+    test('uses tokens a background isolate already refreshed', () async {
+      var refreshCalls = 0;
+      final client = MockClient((req) async {
+        if (req.url.path.endsWith('/jwt/refresh/')) {
+          refreshCalls++;
+          return json({'detail': 'Token is blacklisted'}, 401);
+        }
+        return req.headers['Authorization'] == 'JWT fresh'
+            ? json({'ok': true})
+            : json({'detail': 'expired'}, 401);
+      });
+      // Background isolate rotated the tokens and saved them.
+      FlutterSecureStorage.setMockInitialValues({
+        'ar_access_me@x.com': 'fresh',
+        'ar_refresh_me@x.com': 'r2',
+      });
+      final api = await signedIn(client); // still holds old/r1 in memory
+      expect(await api.fetchProfile(), containsPair('ok', true));
+      expect(refreshCalls, 0, reason: 'must not burn the stale refresh token');
+      expect(api.accessToken, 'fresh');
+      expect(api.refreshToken, 'r2');
+    });
+
+    test('signed in on another device → clear re-login request', () async {
+      final client = MockClient((req) async {
+        if (req.url.path.endsWith('/jwt/refresh/')) {
+          return json({'access': 'new'}); // refresh "works"…
+        }
+        return json({'detail': 'expired'}, 401); // …but every token is refused
+      });
+      final api = await signedIn(client);
+      await expectLater(
+        api.fetchProfile(),
+        throwsA(isA<ArApiException>()
+            .having((e) => e.needsReauth, 'needsReauth', isTrue)
+            .having((e) => e.message, 'message', contains('another device'))),
       );
       expect(api.isLoggedIn, isFalse);
     });
