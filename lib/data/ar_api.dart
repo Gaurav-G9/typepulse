@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/session.dart';
+import 'scoring.dart';
 
 /// Client for AR Typing Platform backend (Heroku API used by artypingplatform.com).
 ///
@@ -21,6 +23,9 @@ class ArTypingApi {
       'https://artypingplatform-efb5438ddb1b.herokuapp.com/api/v1';
   static const siteUrl = 'https://www.artypingplatform.com';
 
+  /// Network calls never hang forever (important for background isolates).
+  static const requestTimeout = Duration(seconds: 25);
+
   // Legacy single-account keys (migrated on first load).
   static const _kLegacyAccess = 'ar_access_token';
   static const _kLegacyRefresh = 'ar_refresh_token';
@@ -33,6 +38,9 @@ class ArTypingApi {
   String? accessToken;
   String? refreshToken;
   String? email;
+
+  /// Shared in-flight refresh so parallel 401s trigger a single token refresh.
+  Future<_RefreshOutcome>? _refreshInFlight;
 
   ArTypingApi({
     FlutterSecureStorage? secure,
@@ -51,9 +59,16 @@ class ArTypingApi {
 
   Future<void> loadAccount(String id, {String? emailHint}) async {
     accountId = id;
-    accessToken = await _secure.read(key: _accessKey(id));
-    refreshToken = await _secure.read(key: _refreshKey(id));
     email = emailHint;
+    try {
+      accessToken = await _secure.read(key: _accessKey(id));
+      refreshToken = await _secure.read(key: _refreshKey(id));
+    } catch (_) {
+      // Keystore can be unreadable after a backup restore / OS upgrade;
+      // treat as signed out instead of crashing the app.
+      accessToken = null;
+      refreshToken = null;
+    }
   }
 
   /// Migrate pre-multi-account tokens into the given [accountId].
@@ -73,11 +88,15 @@ class ArTypingApi {
   }
 
   Future<Map<String, String?>> readLegacyTokens() async {
-    return {
-      'access': await _secure.read(key: _kLegacyAccess),
-      'refresh': await _secure.read(key: _kLegacyRefresh),
-      'email': await _secure.read(key: _kLegacyEmail),
-    };
+    try {
+      return {
+        'access': await _secure.read(key: _kLegacyAccess),
+        'refresh': await _secure.read(key: _kLegacyRefresh),
+        'email': await _secure.read(key: _kLegacyEmail),
+      };
+    } catch (_) {
+      return const {'access': null, 'refresh': null, 'email': null};
+    }
   }
 
   Future<void> _persist() async {
@@ -128,17 +147,21 @@ class ArTypingApi {
     required String password,
     required String accountId,
   }) async {
-    final res = await _http.post(
-      Uri.parse('$baseUrl/jwt/create/'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({'email': email.trim(), 'password': password}),
-    );
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/jwt/create/'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: jsonEncode({'email': email.trim(), 'password': password}),
+        )
+        .timeout(requestTimeout);
 
     if (res.statusCode == 200 || res.statusCode == 201) {
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final decoded = _tryDecode(res.body);
+      final body =
+          decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
       this.accountId = accountId;
       accessToken = body['access'] as String?;
       refreshToken = body['refresh'] as String?;
@@ -160,35 +183,64 @@ class ArTypingApi {
     throw ArApiException(detail, statusCode: res.statusCode);
   }
 
-  Future<bool> refreshAccessToken() async {
-    if (refreshToken == null || refreshToken!.isEmpty) return false;
-    final res = await _http.post(
-      Uri.parse('$baseUrl/jwt/refresh/'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({'refresh': refreshToken}),
-    );
-    if (res.statusCode == 200) {
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
-      accessToken = body['access'] as String?;
-      await _persist();
-      return accessToken != null;
+  Future<bool> refreshAccessToken() async =>
+      (await _refresh()) == _RefreshOutcome.ok;
+
+  Future<_RefreshOutcome> _refresh() {
+    return _refreshInFlight ??=
+        _doRefresh().whenComplete(() => _refreshInFlight = null);
+  }
+
+  Future<_RefreshOutcome> _doRefresh() async {
+    if (refreshToken == null || refreshToken!.isEmpty) {
+      return _RefreshOutcome.rejected;
     }
-    // Refresh rejected — clear tokens so UI can re-auth.
-    await clearSession();
-    return false;
+    final http.Response res;
+    try {
+      res = await _http
+          .post(
+            Uri.parse('$baseUrl/jwt/refresh/'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({'refresh': refreshToken}),
+          )
+          .timeout(requestTimeout);
+    } catch (_) {
+      // Offline / timeout: keep tokens, try again next sync.
+      return _RefreshOutcome.failed;
+    }
+    if (res.statusCode == 200) {
+      final body = _tryDecode(res.body);
+      final access = body is Map ? body['access'] as String? : null;
+      if (access == null || access.isEmpty) return _RefreshOutcome.failed;
+      accessToken = access;
+      // SimpleJWT with ROTATE_REFRESH_TOKENS returns a new refresh token too.
+      final rotated = body['refresh'];
+      if (rotated is String && rotated.isNotEmpty) refreshToken = rotated;
+      await _persist();
+      return _RefreshOutcome.ok;
+    }
+    if (res.statusCode == 400 || res.statusCode == 401) {
+      // Refresh token expired/blacklisted — clear so UI can re-auth.
+      await clearSession();
+      return _RefreshOutcome.rejected;
+    }
+    // 5xx / Heroku waking up: transient, keep the session.
+    return _RefreshOutcome.failed;
   }
 
   Future<void> logoutRemote() async {
     try {
       if (accessToken != null && refreshToken != null) {
-        await _http.post(
-          Uri.parse('$baseUrl/logout/'),
-          headers: _authHeaders,
-          body: jsonEncode({'refresh': refreshToken}),
-        );
+        await _http
+            .post(
+              Uri.parse('$baseUrl/logout/'),
+              headers: _authHeaders,
+              body: jsonEncode({'refresh': refreshToken}),
+            )
+            .timeout(requestTimeout);
       }
     } catch (_) {
       // Best-effort remote logout.
@@ -197,20 +249,85 @@ class ArTypingApi {
   }
 
   Future<http.Response> _authedGet(Uri uri) async {
-    var res = await _http.get(uri, headers: _authHeaders);
+    final sentWith = accessToken;
+    var res =
+        await _http.get(uri, headers: _authHeaders).timeout(requestTimeout);
     if (res.statusCode == 401) {
-      final ok = await refreshAccessToken();
-      if (ok) {
-        res = await _http.get(uri, headers: _authHeaders);
-      } else {
-        throw ArApiException(
-          'Session expired. Sign in again.',
-          statusCode: 401,
-          needsReauth: true,
-        );
+      // Another request may already have refreshed the token.
+      final outcome = accessToken != sentWith && accessToken != null
+          ? _RefreshOutcome.ok
+          : await _refresh();
+      switch (outcome) {
+        case _RefreshOutcome.ok:
+          res = await _http
+              .get(uri, headers: _authHeaders)
+              .timeout(requestTimeout);
+        case _RefreshOutcome.rejected:
+          throw ArApiException(
+            'Session expired. Sign in again.',
+            statusCode: 401,
+            needsReauth: true,
+          );
+        case _RefreshOutcome.failed:
+          throw ArApiException(
+            'Could not refresh your AR Typing session. Check your connection.',
+            statusCode: 401,
+          );
       }
     }
     return res;
+  }
+
+  static dynamic _tryDecode(String body) {
+    try {
+      return jsonDecode(body);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static ArHistoryPage _parseHistoryPage(http.Response res) {
+    final body = _tryDecode(res.body);
+    if (body is List) {
+      return ArHistoryPage(
+        results: body.whereType<Map<String, dynamic>>().toList(),
+        count: body.length,
+        next: null,
+      );
+    }
+    if (body is! Map<String, dynamic>) {
+      throw ArApiException('Unexpected response from AR Typing.',
+          statusCode: res.statusCode);
+    }
+    final results = (body['results'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    final next = body['next'];
+    return ArHistoryPage(
+      results: results,
+      count: _asInt(body['count']) ?? results.length,
+      next: next is String && next.isNotEmpty ? next : null,
+    );
+  }
+
+  static void _checkHistoryStatus(http.Response res) {
+    if (res.statusCode == 403) {
+      throw ArApiException(
+        'Free Mode limit or plan restriction on typing history. Upgrade on AR Typing if needed.',
+        statusCode: 403,
+        freeMode: true,
+      );
+    }
+    if (res.statusCode != 200) {
+      throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
+    }
+  }
+
+  /// Heroku behind a proxy may hand back `http://` next links; Android blocks
+  /// cleartext traffic, so always follow them over HTTPS.
+  static Uri _secureUri(String url) {
+    final uri = Uri.parse(url);
+    return uri.scheme == 'http' ? uri.replace(scheme: 'https') : uri;
   }
 
   /// Paginated typing history from member area.
@@ -226,33 +343,8 @@ class ArTypingApi {
       },
     );
     final res = await _authedGet(uri);
-    if (res.statusCode == 403) {
-      throw ArApiException(
-        'Free Mode limit or plan restriction on typing history. Upgrade on AR Typing if needed.',
-        statusCode: 403,
-        freeMode: true,
-      );
-    }
-    if (res.statusCode != 200) {
-      throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
-    }
-    final body = jsonDecode(res.body);
-    if (body is List) {
-      return ArHistoryPage(
-        results: body.cast<Map<String, dynamic>>(),
-        count: body.length,
-        next: null,
-      );
-    }
-    final map = body as Map<String, dynamic>;
-    final results = (map['results'] as List<dynamic>? ?? [])
-        .map((e) => e as Map<String, dynamic>)
-        .toList();
-    return ArHistoryPage(
-      results: results,
-      count: map['count'] as int? ?? results.length,
-      next: map['next'] as String?,
-    );
+    _checkHistoryStatus(res);
+    return _parseHistoryPage(res);
   }
 
   /// Walk `next` until exhausted or [maxPages] (page_size up to 100).
@@ -266,27 +358,9 @@ class ArTypingApi {
     while (page <= maxPages) {
       final ArHistoryPage batch;
       if (nextUrl != null) {
-        final res = await _authedGet(Uri.parse(nextUrl));
-        if (res.statusCode != 200) {
-          throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
-        }
-        final body = jsonDecode(res.body);
-        if (body is List) {
-          batch = ArHistoryPage(
-            results: body.cast<Map<String, dynamic>>(),
-            count: body.length,
-            next: null,
-          );
-        } else {
-          final map = body as Map<String, dynamic>;
-          batch = ArHistoryPage(
-            results: (map['results'] as List<dynamic>? ?? [])
-                .map((e) => e as Map<String, dynamic>)
-                .toList(),
-            count: map['count'] as int? ?? 0,
-            next: map['next'] as String?,
-          );
-        }
+        final res = await _authedGet(_secureUri(nextUrl));
+        _checkHistoryStatus(res);
+        batch = _parseHistoryPage(res);
       } else {
         batch = await fetchTypingHistory(page: page, pageSize: pageSize);
       }
@@ -313,9 +387,9 @@ class ArTypingApi {
     if (res.statusCode != 200) {
       throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
     }
-    final body = jsonDecode(res.body);
+    final body = _tryDecode(res.body);
     if (body is Map<String, dynamic>) return body;
-    if (body is List && body.isNotEmpty) {
+    if (body is List && body.isNotEmpty && body.first is Map<String, dynamic>) {
       return body.first as Map<String, dynamic>;
     }
     return null;
@@ -336,9 +410,43 @@ class ArTypingApi {
     if (res.statusCode != 200) {
       throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
     }
-    final body = jsonDecode(res.body);
+    final body = _tryDecode(res.body);
     if (body is Map<String, dynamic>) return body;
     return null;
+  }
+
+  /// Member-area "Typing Insight" for the last [days] days (1/2/7/15/30).
+  /// Returns null when there's no activity in that window (API 404).
+  Future<Map<String, dynamic>?> fetchTypingProgress(int days) async {
+    if (!isLoggedIn) throw ArApiException('Not logged in', statusCode: 401);
+    final res = await _authedGet(
+      Uri.parse('$baseUrl/learning/typing-progress/')
+          .replace(queryParameters: {'days': '$days'}),
+    );
+    if (res.statusCode == 404) return null;
+    if (res.statusCode == 403) {
+      throw ArApiException(
+        'Typing Insight is not available on your current AR Typing plan.',
+        statusCode: 403,
+        freeMode: true,
+      );
+    }
+    if (res.statusCode != 200) {
+      throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
+    }
+    final body = _tryDecode(res.body);
+    return body is Map<String, dynamic> ? body : null;
+  }
+
+  /// Account details (`/users/me/`): name, `is_subscribed`, `subscription`.
+  Future<Map<String, dynamic>?> fetchMe() async {
+    if (!isLoggedIn) return null;
+    final res = await _authedGet(Uri.parse('$baseUrl/users/me/'));
+    if (res.statusCode != 200) {
+      throw ArApiException(_errorDetail(res), statusCode: res.statusCode);
+    }
+    final body = _tryDecode(res.body);
+    return body is Map<String, dynamic> ? body : null;
   }
 
   static String _errorDetail(http.Response res) {
@@ -356,78 +464,146 @@ class ArTypingApi {
     return 'Request failed (${res.statusCode})';
   }
 
-  /// Map one AR typedPassages row → TypingSession for Fitness-style UI.
-  static TypingSession sessionFromRemote(Map<String, dynamic> e) {
-    final idRaw = e['id'];
-    final id = 'ar-$idRaw';
+  /// Net speed was not computed server-side before this date; the site shows
+  /// "See In Detail" for those rows and recomputes from the texts.
+  static final legacyNetCutoff = DateTime.utc(2025, 3, 13);
+
+  /// Map one `/learning/typedPassages/` row → [TypingSession].
+  ///
+  /// Field names follow the member-area "Typing History" table:
+  /// `exam_title`, `passage_title`, `typing_date`, `time_duration`
+  /// ("HH:mm:ss" or seconds), `time_taken` (minutes), `key_strokes_given`,
+  /// `key_strokes_typed`, `key_strokes_error`, `target_speed` (0 = NA),
+  /// `gross_speed`, `net_speed`, `qualified`, `total_wrong_words`,
+  /// `passage_text`, `typed_passage_text`.
+  ///
+  /// [fallbackOrder] keeps the API's newest-first order for rows that only
+  /// carry a calendar date (higher = newer).
+  static TypingSession sessionFromRemote(Map<String, dynamic> e,
+      {int fallbackOrder = 0}) {
     final exam = (e['exam_title'] ?? e['exam_name'] ?? 'AR Typing Exam')
         .toString();
     final passage = (e['passage_title'] ?? 'Passage').toString();
-    final created = _parseDate(e['created_at']) ?? DateTime.now();
+
+    final rawDate = e['typing_date'] ?? e['created_at'];
+    var created = _parseDate(rawDate) ?? DateTime.now();
+    final dateOnly = rawDate is String && !rawDate.contains(':');
+    if (dateOnly) {
+      // Same-day rows would otherwise tie; preserve server order.
+      created = created.add(Duration(seconds: fallbackOrder));
+    }
 
     final durationSec = _parseDurationSec(e['time_duration']);
     // Site stores time_taken in minutes (see web: 60 * time_taken * 1000).
-    final timeTakenRaw = (e['time_taken'] as num?)?.toDouble() ?? 0;
+    final timeTakenRaw = _asDouble(e['time_taken']) ?? 0;
     var timeTakenSec = (timeTakenRaw * 60).round();
     if (timeTakenSec <= 0) timeTakenSec = durationSec > 0 ? durationSec : 1;
 
-    final keyGiven = (e['key_strokes_given'] as num?)?.toInt() ?? 0;
-    final keyTyped = (e['key_strokes_typed'] as num?)?.toInt() ?? 0;
-    final target = (e['target_speed'] as num?)?.toInt() ?? 30;
-    var gross = (e['gross_speed'] as num?)?.toDouble() ?? 0;
-    var net = (e['net_speed'] as num?)?.toDouble() ?? 0;
-    if (gross == 0 && keyTyped > 0 && timeTakenRaw > 0) {
-      gross = keyTyped / (timeTakenRaw * 5);
+    final keyGiven = _asInt(e['key_strokes_given']) ?? 0;
+    final keyTyped = _asInt(e['key_strokes_typed']) ?? 0;
+    final keyError = _asInt(e['key_strokes_error']);
+    final target = _asInt(e['target_speed']) ?? 0; // 0 = not set ("NA")
+    var gross = _asDouble(e['gross_speed']) ?? 0;
+    var net = _asDouble(e['net_speed']) ?? 0;
+    final minutes = timeTakenRaw > 0 ? timeTakenRaw : timeTakenSec / 60.0;
+    if (gross == 0 && keyTyped > 0 && minutes > 0) {
+      gross = keyTyped / (minutes * 5); // same fallback as the website
     }
 
+    final expected = _nonEmpty(e['passage_text']);
+    final typed = _nonEmpty(e['typed_passage_text']);
     final wordsTyped = keyTyped / 5.0;
-    final backspaces = (e['back_space_count'] as num?)?.toInt() ?? 0;
-    final qualified = e['qualified'] as bool? ?? (net >= target);
-    final full = (e['full_mistake'] as num?)?.toInt() ??
-        (e['full_mistakes'] as num?)?.toInt() ??
-        0;
-    final half = (e['half_mistake'] as num?)?.toInt() ??
-        (e['half_mistakes'] as num?)?.toInt() ??
-        0;
-    final totalWrong = (e['total_wrong_words'] as num?)?.toDouble() ??
-        (full + half * 0.5);
-    final lang = _guessLang(exam, e['language_id']);
+    final backspaces = _asInt(e['back_space_count']) ?? 0;
 
-    final expected = e['passage_text'] as String?;
-    final typed = e['typed_passage_text'] as String?;
+    // AR rows carry no full/half mistake counts — derive them from the texts.
+    var full = _asInt(e['full_mistake']) ?? _asInt(e['full_mistakes']);
+    var half = _asInt(e['half_mistake']) ?? _asInt(e['half_mistakes']);
+    final legacyNet = net == 0 &&
+        gross > 0 &&
+        created.toUtc().isBefore(legacyNetCutoff);
+    final needsLocal =
+        legacyNet || (keyError == null && e['accuracy'] == null);
+    ScoreBreakdown? local;
+    // Word alignment is O(words²); only run it when AR lacks the numbers.
+    if (needsLocal && expected != null && typed != null) {
+      local = Scoring.evaluate(
+        expected: expected,
+        typed: typed,
+        durationSec: durationSec,
+        timeTakenSec: timeTakenSec,
+        targetWpm: target,
+      );
+      full ??= local.fullMistakes;
+      half ??= local.halfMistakes;
+    }
+    final totalWrong = _asDouble(e['total_wrong_words']) ??
+        ((full ?? 0) + (half ?? 0) * 0.5);
 
-    final accuracy = (e['accuracy'] as num?)?.toDouble() ??
-        (keyTyped == 0
-            ? 0.0
-            : ((1 - (totalWrong / (wordsTyped == 0 ? 1 : wordsTyped))) * 100)
-                .clamp(0, 100));
+    var note = 'Synced from AR Typing';
+    if (legacyNet && local != null) {
+      net = local.netWpm;
+      note = 'Net speed recalculated on device (AR shows "See In Detail" '
+          'for tests before 13 Mar 2025)';
+    }
+
+    final accuracy = (_asDouble(e['accuracy']) ??
+            (keyError != null && keyTyped > 0
+                ? (keyTyped - keyError) / keyTyped * 100
+                : local?.accuracy ??
+                    (keyTyped == 0
+                        ? 0.0
+                        : (1 - totalWrong / (wordsTyped == 0 ? 1 : wordsTyped)) *
+                            100)))
+        .clamp(0.0, 100.0);
+
+    final q = e['qualified'];
+    final qualified = q is bool
+        ? q
+        : q is num
+            ? q != 0
+            : q is String
+                ? const {'true', '1', 'yes', 'qualified'}
+                    .contains(q.trim().toLowerCase())
+                : (target > 0 && net >= target);
+
+    final idRaw = e['id'] ?? e['typing_id'] ?? e['pk'];
+    // The member history endpoint may omit ids; fingerprint the row so the
+    // same result keeps the same id across syncs (needed for notifications).
+    final id = idRaw != null
+        ? 'ar-$idRaw'
+        : 'ar-${rawDate ?? ''}|$exam|$passage|$keyTyped|${e['time_taken']}|'
+            '${e['gross_speed']}|${e['net_speed']}';
+
+    final correctChars = keyError != null
+        ? (keyTyped - keyError).clamp(0, keyTyped)
+        : (keyTyped * (accuracy / 100)).round().clamp(0, keyTyped);
 
     return TypingSession(
       id: id,
       startedAt: created,
       durationSec: durationSec > 0 ? durationSec : 300,
       timeTakenSec: timeTakenSec,
-      language: lang,
+      language: _guessLang(exam, e['language_id'] ?? e['language'], expected),
       mode: 'ar_sync',
       examTitle: exam,
       passageTitle: passage,
       keystrokesGiven: keyGiven,
       typedChars: keyTyped,
-      correctChars: (keyTyped * (accuracy / 100)).round().clamp(0, keyTyped),
-      errors:
-          (keyTyped - (keyTyped * (accuracy / 100)).round()).clamp(0, keyTyped),
+      correctChars: correctChars,
+      errors: keyTyped - correctChars,
       wordsTyped: wordsTyped,
-      fullMistakes: full,
-      halfMistakes: half,
+      fullMistakes: full ?? 0,
+      halfMistakes: half ?? 0,
       totalWrongWords: totalWrong,
-      netWrongWords: (e['net_wrong_words'] as num?)?.toDouble() ?? 0,
+      netWrongWords: _asDouble(e['net_wrong_words']) ?? 0,
       backspaceCount: backspaces,
       wpm: gross,
       netWpm: net,
-      accuracy: accuracy.toDouble(),
+      accuracy: accuracy,
       qualified: qualified,
       formulaNote:
-          'Synced from AR Typing · Net ${net.toStringAsFixed(2)} / Gross ${gross.toStringAsFixed(2)} · target $target',
+          '$note · Net ${net.toStringAsFixed(2)} / Gross ${gross.toStringAsFixed(2)}'
+          '${target > 0 ? ' · target $target' : ''}',
       targetWpm: target,
       expectedText: expected,
       typedText: typed,
@@ -435,14 +611,28 @@ class ArTypingApi {
     );
   }
 
-  static String _guessLang(String exam, dynamic languageId) {
+  static String? _nonEmpty(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString();
+    return s.trim().isEmpty ? null : s;
+  }
+
+  static final _devanagari = RegExp('[\u0900-\u097F]');
+
+  static String _guessLang(String exam, dynamic language, [String? text]) {
     final lower = exam.toLowerCase();
     if (lower.contains('hindi') ||
         lower.contains('mangal') ||
         lower.contains('krutidev')) {
       return 'hi';
     }
-    if (languageId == 2 || languageId == '2') return 'hi';
+    if (text != null && _devanagari.hasMatch(text)) return 'hi';
+    if (language is Map) {
+      final name = '${language['name'] ?? language['title'] ?? ''}';
+      if (name.toLowerCase().contains('hindi')) return 'hi';
+      language = language['id'];
+    }
+    if (language == 2 || language == '2') return 'hi';
     return 'en';
   }
 
@@ -457,22 +647,34 @@ class ArTypingApi {
 
   static int _parseDurationSec(dynamic v) {
     if (v == null) return 300;
-    if (v is num) return (v * 60).round(); // minutes
-    final s = v.toString();
-    final parts = s.split(':');
-    try {
-      if (parts.length == 3) {
-        return int.parse(parts[0]) * 3600 +
-            int.parse(parts[1]) * 60 +
-            int.parse(parts[2]);
-      }
-      if (parts.length == 2) {
-        return int.parse(parts[0]) * 60 + int.parse(parts[1]);
-      }
-    } catch (_) {}
+    if (v is num) return v.round(); // seconds, as on the website
+    final s = v.toString().trim();
+    final asNum = double.tryParse(s);
+    // The website treats a bare number as seconds (utc(1000 * n)).
+    if (asNum != null) return asNum.round();
+    // "HH:MM:SS", "MM:SS", optionally with fractional seconds ("00:05:00.000").
+    final parts = s.split(':').map((p) => double.tryParse(p.trim())).toList();
+    if (parts.any((p) => p == null)) return 300;
+    if (parts.length == 3) {
+      return (parts[0]! * 3600 + parts[1]! * 60 + parts[2]!).round();
+    }
+    if (parts.length == 2) {
+      return (parts[0]! * 60 + parts[1]!).round();
+    }
     return 300;
   }
+
+  /// Django DecimalFields arrive as strings ("39.60"); accept both.
+  static double? _asDouble(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString().trim());
+  }
+
+  static int? _asInt(dynamic v) => _asDouble(v)?.round();
 }
+
+enum _RefreshOutcome { ok, rejected, failed }
 
 class ArHistoryPage {
   final List<Map<String, dynamic>> results;

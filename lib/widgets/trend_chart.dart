@@ -32,7 +32,7 @@ class TrendChart extends StatelessWidget {
           accColor: AppColors.ringStand,
           gridColor: AppColors.separator,
           labelColor: AppColors.secondaryLabel,
-          fillColor: AppColors.ringMove.withOpacity(AppColors.dark ? 0.18 : 0.12),
+          fillColor: AppColors.ringMove.withValues(alpha: AppColors.dark ? 0.18 : 0.12),
         ),
       ),
     );
@@ -74,7 +74,7 @@ class _TrendPainter extends CustomPainter {
 
     // Grid
     final gridPaint = Paint()
-      ..color = gridColor.withOpacity(0.55)
+      ..color = gridColor.withValues(alpha: 0.55)
       ..strokeWidth = 1;
     for (var i = 0; i <= 3; i++) {
       final y = chart.top + chart.height * i / 3;
@@ -169,7 +169,7 @@ class _TrendPainter extends CustomPainter {
       canvas.drawPath(
         accPath,
         Paint()
-          ..color = accColor.withOpacity(0.85)
+          ..color = accColor.withValues(alpha: 0.85)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5
           ..strokeCap = StrokeCap.round,
@@ -184,12 +184,12 @@ class _TrendPainter extends CustomPainter {
         ? ['−6', '−5', '−4', '−3', '−2', '−1', 'Today']
         : days <= 15
             ? ['−14', '−10', '−7', '−3', 'Today']
-            : ['−30', '−20', '−10', 'Today'];
+            : ['−29', '−20', '−10', 'Today'];
     final positions = days <= 7
         ? [0, 1, 2, 3, 4, 5, 6]
         : days <= 15
             ? [0, 4, 7, 11, 14]
-            : [0, 10, 20, 29];
+            : [0, 9, 19, 29];
     for (var i = 0; i < labels.length && i < positions.length; i++) {
       final idx = positions[i].clamp(0, days - 1);
       final n = max(1, days - 1);

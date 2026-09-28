@@ -47,7 +47,7 @@ class NetSparkline extends StatelessWidget {
                         begin: Alignment.bottomCenter,
                         end: Alignment.topCenter,
                         colors: [
-                          AppColors.ringMove.withOpacity(0.85),
+                          AppColors.ringMove.withValues(alpha: 0.85),
                           AppColors.orange,
                         ],
                       ),

@@ -6,6 +6,7 @@ import '../models/session.dart';
 import '../theme/app_colors.dart';
 import '../widgets/activity_rings.dart';
 import '../widgets/ios_card.dart';
+import '../widgets/store_rebuild.dart';
 import 'session_detail_screen.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -16,7 +17,11 @@ class HistoryScreen extends StatefulWidget {
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
 
-class _HistoryScreenState extends State<HistoryScreen> {
+class _HistoryScreenState extends State<HistoryScreen>
+    with RebuildOn<HistoryScreen> {
+  @override
+  Listenable get rebuildSource => widget.store;
+
   String filter = 'all'; // all | en | hi | qualified
 
   List<TypingSession> get filtered {
@@ -100,10 +105,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                             decoration: BoxDecoration(
-                              color: AppColors.blue.withOpacity(0.15),
+                              color: AppColors.blue.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: Text('AR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.blue)),
+                            child: const Text('AR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.blue)),
                           ),
                       ]),
                       const SizedBox(height: 2),
@@ -113,7 +118,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         _cell(DateFormat('dd/MM/yyyy').format(s.startedAt), 'Date'),
                         _cell(mmss(s.timeTakenSec), 'Time'),
                         _cell('${s.typedChars}', 'Keys'),
-                        _cell('${s.targetWpm}', 'Tgt'),
+                        _cell(s.targetWpm > 0 ? '${s.targetWpm}' : 'NA', 'Tgt'),
                         _cell(s.wpm.toStringAsFixed(0), 'Gross'),
                         _cell(s.netWpm.toStringAsFixed(0), 'Net'),
                       ]),

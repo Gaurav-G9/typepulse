@@ -22,22 +22,29 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   late List<LiveRacer> field;
   final controller = TextEditingController();
   Timer? tick;
+  Timer? clock;
+  String last = '';
   int remaining = duration;
   bool running = false;
   bool done = false;
   final rng = Random();
+  final botPace = <String, double>{}; // bot id → target WPM
 
   @override
   void initState() {
     super.initState();
     final names = ['Aarav', 'Isha', 'Rohan', 'Neha', 'Kabir', 'Ananya', 'Vikram']..shuffle();
-    field = [LiveRacer(id: widget.store.profile.id, name: 'You', isYou: true), ...List.generate(widget.fieldSize - 1, (i) => LiveRacer(id: 'b$i', name: names[i]))];
+    field = [LiveRacer(id: widget.store.profile.id, name: 'You', isYou: true), ...List.generate(widget.fieldSize - 1, (i) => LiveRacer(id: 'b$i', name: names[i % names.length]))];
+    for (final r in field.where((e) => !e.isYou)) {
+      botPace[r.id] = 22 + rng.nextDouble() * 23; // 22–45 WPM, exam-realistic
+    }
     controller.addListener(_onType);
   }
 
   @override
   void dispose() {
     tick?.cancel();
+    clock?.cancel();
     controller.dispose();
     super.dispose();
   }
@@ -48,14 +55,18 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     tick = Timer.periodic(const Duration(milliseconds: 400), (_) {
       if (!mounted || done) return;
       setState(() {
+        final len = max(1, widget.passage.text.length);
         for (final r in field.where((e) => !e.isYou && !e.finished)) {
-          r.progress = min(1, r.progress + 0.01 + rng.nextDouble() * 0.02);
-          r.wpm = 22 + r.progress * 20;
+          final pace = botPace[r.id] ?? 30;
+          r.wpm = pace * (0.85 + rng.nextDouble() * 0.3);
+          // WPM × 5 keystrokes per word, over one 0.4s tick.
+          final chars = r.wpm * 5 / 60 * 0.4;
+          r.progress = min(1, r.progress + chars / len);
           if (r.progress >= 1) r.finished = true;
         }
       });
     });
-    Timer.periodic(const Duration(seconds: 1), (t) {
+    clock = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted || done) { t.cancel(); return; }
       setState(() => remaining--);
       if (remaining <= 0) _finish();
@@ -64,6 +75,9 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
 
   void _onType() {
     if (done) return;
+    // Ignore cursor/selection-only notifications (e.g. tapping the field).
+    if (controller.text == last) return;
+    last = controller.text;
     if (!running) _start();
     final you = field.firstWhere((r) => r.isYou);
     setState(() {
@@ -83,6 +97,7 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
   void _finish() {
     if (done) return;
     tick?.cancel();
+    clock?.cancel();
     setState(() => done = true);
     final taken = (duration - max(remaining, 0)).clamp(1, duration);
     final session = AppStore.buildSession(
@@ -108,22 +123,38 @@ class _LiveRoomScreenState extends State<LiveRoomScreen> {
     final sorted = [...field]..sort((a, b) => b.progress.compareTo(a.progress));
     return CupertinoPageScaffold(
       backgroundColor: AppColors.background,
-      navigationBar: CupertinoNavigationBar(middle: Text(widget.roomName), trailing: Text('${remaining}s')),
+      navigationBar: CupertinoNavigationBar(
+        middle: Text(widget.roomName, style: TextStyle(color: AppColors.label)),
+        backgroundColor: AppColors.navBar,
+        border: null,
+        trailing: Text('${max(remaining, 0)}s', style: TextStyle(color: AppColors.label, fontWeight: FontWeight.w600)),
+      ),
       child: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Rank #$myRank of ${field.length}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
+            Text('Rank #$myRank of ${field.length}', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22, color: AppColors.label)),
             const SizedBox(height: 10),
             ...sorted.map((r) => Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text('${r.name}   ${(r.progress * 100).toStringAsFixed(0)}%   ${r.wpm.toStringAsFixed(0)} wpm',
-                  style: TextStyle(fontWeight: r.isYou ? FontWeight.w800 : FontWeight.w500)),
+                  style: TextStyle(color: r.isYou ? AppColors.indigo : AppColors.label, fontWeight: r.isYou ? FontWeight.w800 : FontWeight.w500)),
             )),
             const SizedBox(height: 12),
-            Text(widget.passage.text),
+            Text(widget.passage.text, style: TextStyle(fontSize: 16, height: 1.45, color: AppColors.label)),
             const SizedBox(height: 10),
-            CupertinoTextField(controller: controller, maxLines: 5, enabled: !done, placeholder: 'Type to race'),
+            CupertinoTextField(
+              controller: controller,
+              maxLines: 5,
+              enabled: !done,
+              placeholder: 'Type to race',
+              style: TextStyle(color: AppColors.label),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.separator),
+              ),
+            ),
           ],
         ),
       ),

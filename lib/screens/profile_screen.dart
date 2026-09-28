@@ -26,7 +26,7 @@ class ProfileScreen extends StatelessWidget {
               CupertinoButton(
                 padding: EdgeInsets.zero,
                 onPressed: () => showAccountSwitcher(context, store),
-                child: Icon(
+                child: const Icon(
                   CupertinoIcons.person_2_fill,
                   color: AppColors.indigo,
                   size: 22,
@@ -58,7 +58,7 @@ class ProfileScreen extends StatelessWidget {
                     if (store.activeAccount != null) ...[
                       const SizedBox(height: 6),
                       Text(store.activeAccount!.email,
-                          style: TextStyle(
+                          style: const TextStyle(
                               fontSize: 13, color: AppColors.blue)),
                     ],
                   ],
@@ -91,7 +91,7 @@ class ProfileScreen extends StatelessWidget {
               IosCard(
                 onTap: () => showAccountSwitcher(context, store),
                 child: Row(children: [
-                  Icon(CupertinoIcons.person_2,
+                  const Icon(CupertinoIcons.person_2,
                       color: AppColors.indigo, size: 22),
                   const SizedBox(width: 10),
                   Expanded(
@@ -151,6 +151,19 @@ class ProfileScreen extends StatelessWidget {
                       ),
                       if (store.arSyncing) const CupertinoActivityIndicator(),
                     ]),
+                    if (store.arConnected && store.arPlanTitle != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Plan: ${store.arPlanTitle}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: store.arSubscribed == false
+                              ? AppColors.orange
+                              : AppColors.green,
+                        ),
+                      ),
+                    ],
                     if (store.arStatusMessage != null) ...[
                       const SizedBox(height: 8),
                       Text(store.arStatusMessage!,
@@ -161,7 +174,7 @@ class ProfileScreen extends StatelessWidget {
                       const SizedBox(height: 8),
                       Text(store.arError!,
                           style:
-                              TextStyle(fontSize: 12, color: AppColors.red)),
+                              const TextStyle(fontSize: 12, color: AppColors.red)),
                     ],
                     const SizedBox(height: 12),
                     if (!store.arConnected)
@@ -191,7 +204,7 @@ class ProfileScreen extends StatelessWidget {
                           onPressed: store.arSyncing
                               ? null
                               : () => store.arLogout(),
-                          child: Text('Logout',
+                          child: const Text('Logout',
                               style: TextStyle(color: AppColors.red)),
                         ),
                       ]),
@@ -326,7 +339,7 @@ class ProfileScreen extends StatelessWidget {
     required int max,
     required ValueChanged<int> onSave,
   }) {
-    var current = value;
+    var current = value.clamp(min, max);
     showCupertinoModalPopup<void>(
       context: context,
       builder: (ctx) => Container(
@@ -353,7 +366,7 @@ class ProfileScreen extends StatelessWidget {
             child: CupertinoPicker(
               itemExtent: 36,
               scrollController:
-                  FixedExtentScrollController(initialItem: value - min),
+                  FixedExtentScrollController(initialItem: current - min),
               onSelectedItemChanged: (i) => current = min + i,
               children: [
                 for (var i = min; i <= max; i++)

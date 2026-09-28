@@ -49,6 +49,8 @@ class AppColors {
   static const gradientStart = Color(0xFFFA4D67);
   static const gradientEnd = Color(0xFFFF9F0A);
 
+  static const _base = CupertinoTextThemeData();
+
   static CupertinoThemeData cupertinoTheme() {
     final brightness = dark ? Brightness.dark : Brightness.light;
     return CupertinoThemeData(
@@ -56,19 +58,18 @@ class AppColors {
       primaryColor: indigo,
       scaffoldBackgroundColor: canvas,
       barBackgroundColor: navBar,
+      // Derive from Cupertino's defaults (inherit: false) — the nav-bar
+      // back-swipe animation interpolates these with the back-button label
+      // style and throws if the `inherit` values differ.
       textTheme: CupertinoTextThemeData(
-        textStyle: TextStyle(
-          fontFamily: '.SF Pro Text',
-          color: label,
-          fontSize: 16,
-        ),
-        navLargeTitleTextStyle: TextStyle(
+        textStyle: _base.textStyle.copyWith(color: label, fontSize: 16),
+        navLargeTitleTextStyle: _base.navLargeTitleTextStyle.copyWith(
           fontSize: 34,
           fontWeight: FontWeight.w700,
           color: label,
           letterSpacing: -0.5,
         ),
-        navTitleTextStyle: TextStyle(
+        navTitleTextStyle: _base.navTitleTextStyle.copyWith(
           fontSize: 17,
           fontWeight: FontWeight.w600,
           color: label,

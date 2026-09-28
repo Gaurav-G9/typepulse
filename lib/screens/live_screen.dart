@@ -49,7 +49,7 @@ class LiveLobbyScreen extends StatelessWidget {
                       builder: (_) => LiveRoomScreen(store: store, roomName: r[0], passage: passage),
                     )),
                     child: Row(children: [
-                      Icon(CupertinoIcons.dot_radiowaves_left_right, color: AppColors.pink),
+                      const Icon(CupertinoIcons.dot_radiowaves_left_right, color: AppColors.pink),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(

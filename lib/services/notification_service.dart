@@ -13,7 +13,6 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _ready = false;
-  int _nid = 0;
 
   Future<void> init() async {
     if (_ready) return;
@@ -32,8 +31,15 @@ class NotificationService {
         importance: Importance.defaultImportance,
       ),
     );
-    await androidPlugin?.requestNotificationsPermission();
     _ready = true;
+  }
+
+  /// Android 13+ runtime permission. Needs an Activity, so only call this from
+  /// the UI isolate — never from Workmanager / the foreground service.
+  Future<void> requestPermission() async {
+    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.requestNotificationsPermission();
   }
 
   Future<void> showNewResult({
@@ -41,9 +47,11 @@ class NotificationService {
     required String body,
   }) async {
     if (!_ready) await init();
-    _nid = (_nid + 1) % 100000;
+    // Each isolate has its own memory, so derive ids from the clock instead
+    // of a counter that would restart at 0 and overwrite older alerts.
+    final nid = DateTime.now().millisecondsSinceEpoch ~/ 1000 % 1000000;
     await _plugin.show(
-      _nid,
+      nid,
       title,
       body,
       const NotificationDetails(
